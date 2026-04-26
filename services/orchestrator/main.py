@@ -1,11 +1,13 @@
 import uuid
 import logging
+import os
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 import planner
 import task_manager
+import agent
 from config import settings
 
 logging.basicConfig(level=settings.log_level)
@@ -39,17 +41,20 @@ class TaskAnswerRequest(BaseModel):
 class TaskActionRequest(BaseModel):
     task_id: str
 
+
 # --- Endpoints ---
 
 @app.get("/health", tags=["system"])
 async def health():
     return {"status": "healthy", "service": "cammina-orchestrator"}
 
+
 @app.post("/task/start", tags=["task"])
 async def task_start(req: TaskStartRequest):
     task_id = str(uuid.uuid4())
     state = task_manager.get_state(task_id)
     state["project_id"] = req.project_id
+    state["task_description"] = req.task
     
     questions = await planner.ask_clarifying_questions(req.task, task_id)
     
@@ -65,6 +70,7 @@ async def task_answer(req: TaskAnswerRequest):
     state = task_manager.get_state(req.task_id)
     state["plan"] = plan
     state["total_steps"] = len(plan)
+    state["task_description"] = req.task
     
     return {
         "task_id": req.task_id,
@@ -94,6 +100,7 @@ async def task_resume(req: TaskActionRequest):
     started = task_manager.start_execution(req.task_id)
     return {"success": started}
 
+
 @app.get("/task/status/{task_id}", tags=["task"])
 async def task_status(task_id: str):
     state = task_manager.get_state(task_id)
@@ -120,6 +127,33 @@ async def task_stream(websocket: WebSocket, task_id: str):
         if websocket in task_manager.active_websockets.get(task_id, []):
             task_manager.active_websockets[task_id].remove(websocket)
 
+
+@app.post("/task/quick")
+async def task_quick(request: dict):
+    import httpx, os
+    action = request.get("action")
+    url = "http://localhost:8765"
+    secret = os.getenv("LOCAL_AGENT_SECRET", "mezZeq2aZz6gh8U4emyvd5AhqnsUW6buq/3T4uvZwkM=")
+    headers = {"Authorization": f"Bearer {secret}"}
+    try:
+        if action == "file_write":
+            async with httpx.AsyncClient() as c:
+                await c.post(f"{url}/file/write", headers=headers, json={"path": request.get("path"), "content": request.get("content")})
+            return {"success": True, "message": f"File created at {request.get('path')}"}
+        elif action == "terminal":
+            async with httpx.AsyncClient() as c:
+                r = await c.post(f"{url}/terminal", headers=headers, json={"command": request.get("command"), "cwd": request.get("cwd", "/Users/miruzaankhan")})
+            return r.json()
+        elif action == "file_read":
+            async with httpx.AsyncClient() as c:
+                r = await c.post(f"{url}/file/read", headers=headers, json={"path": request.get("path")})
+            return r.json()
+        else:
+            return {"error": f"Unknown action: {action}"}
+    except Exception as e:
+        return {"error": str(e)}
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host=settings.orchestrator_host, port=settings.orchestrator_port, reload=True)
+

@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import httpx
+import re
 from datetime import datetime, timezone
 
 import planner
@@ -70,6 +71,56 @@ async def checkpoint_loop(task_id: str):
         # Save one final time when paused/cancelled
         await _save_checkpoint(task_id)
 
+async def try_direct_execution(task_id: str) -> bool:
+    """Checks if the task can be handled without the LLM planner."""
+    state = get_state(task_id)
+    task_desc = state.get("task_description", "")
+    if not task_desc:
+        return False
+        
+    task_lower = task_desc.lower()
+    
+    # 1. File Write Handlers
+    if any(k in task_lower for k in ["create a file", "write a file", "save a file", "make a file"]):
+        # Use simpler regex as requested
+        path_match = re.search(r'(?:at|to|named?)\s+([/~][^\s]+)', task_desc)
+        content_match = re.search(r'(?:with content:|content:)\s*(.+?)$', task_desc, re.IGNORECASE | re.DOTALL)
+        
+        if path_match and content_match:
+            path = path_match.group(1)
+            content = content_match.group(1).strip().strip('"\'')
+            await broadcast_event(task_id, "direct_execution", {"message": f"Directly writing to {path}"})
+            result = await agent.file_write(path, content)
+            await broadcast_event(task_id, "result", {"result": result})
+            if not result.get("error"):
+                state["status"] = "completed"
+                await broadcast_event(task_id, "completed", {"message": "Direct task complete"})
+                return True
+
+    # 2. Terminal Handlers
+    if "run this command:" in task_lower:
+        cmd = task_desc.split("run this command:")[1].strip().strip('"\'')
+        await broadcast_event(task_id, "direct_execution", {"message": f"Directly running command: {cmd}"})
+        result = await agent.run_terminal(cmd)
+        await broadcast_event(task_id, "result", {"result": result})
+        state["status"] = "completed"
+        await broadcast_event(task_id, "completed", {"message": "Direct task complete"})
+        return True
+
+    # 3. File Read Handlers
+    if "read file at" in task_lower:
+        path_match = re.search(r'read file at\s+([/~][^\s]+)', task_lower)
+        if path_match:
+            path = path_match.group(1)
+            await broadcast_event(task_id, "direct_execution", {"message": f"Directly reading {path}"})
+            result = await agent.file_read(path)
+            await broadcast_event(task_id, "result", {"result": result})
+            state["status"] = "completed"
+            await broadcast_event(task_id, "completed", {"message": "Direct task complete"})
+            return True
+            
+    return False
+
 async def execute_task_loop(task_id: str):
     """The autonomous execution loop."""
     state = get_state(task_id)
@@ -79,6 +130,10 @@ async def execute_task_loop(task_id: str):
     cp_task = asyncio.create_task(checkpoint_loop(task_id))
     
     try:
+        # 0. Try direct execution first to bypass LLM
+        if await try_direct_execution(task_id):
+            return
+
         plan = state["plan"]
         
         while state["current_step"] < len(plan):
@@ -91,7 +146,19 @@ async def execute_task_loop(task_id: str):
             
             while retry_count < 50 and not success:
                 if retry_count == 0:
-                    action_to_take = await planner.decide_next_command(step, state["history"], task_id)
+                    # Compatibility fix: if the step already has action info (new planner format), use it!
+                    if step.get("action_type") == "file_write" and step.get("file_path") and step.get("content"):
+                        action_to_take = {
+                            "file_path": step["file_path"],
+                            "content": step["content"]
+                        }
+                    elif step.get("action_type") == "file_read" and step.get("file_path"):
+                        action_to_take = {
+                            "file_path": step["file_path"]
+                        }
+                    else:
+                        # Fallback to old dynamic command decision
+                        action_to_take = await planner.decide_next_command(step, state["history"], task_id)
                 elif retry_count < 3:
                     # Retry same command for first 3 failures
                     await broadcast_event(task_id, "retrying", {"attempt": retry_count, "message": "Retrying same approach..."})
@@ -111,6 +178,19 @@ async def execute_task_loop(task_id: str):
                 
                 await broadcast_event(task_id, "action", {"action": action_to_take})
                 
+                # Safety check: never run rm/delete unless task asks for it
+                if "command" in action_to_take:
+                    cmd = action_to_take["command"].lower()
+                    destructive_keywords = ["rm", "rmdir", "del", "delete"]
+                    if any(k in cmd for k in destructive_keywords):
+                        task_desc = state.get("task_description", "").lower()
+                        if not any(word in task_desc for word in ["delete", "remove", "clean"]):
+                            logger.warning(f"Skipped dangerous command: {cmd}")
+                            await broadcast_event(task_id, "safety_skip", {"message": f"Skipped dangerous command: {cmd}"})
+                            # Skip this step entirely as requested
+                            success = True 
+                            break # Break the retry loop, success=True moves to next step
+
                 # Execute action
                 result = {}
                 try:
