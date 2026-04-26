@@ -6,6 +6,7 @@ import { Send, Bot, User, Command } from 'lucide-react';
 export default function ChatComponent() {
   const [input, setInput] = useState('');
   const [taskMode, setTaskMode] = useState<'idle' | 'answering'>('idle');
+  const [originalTask, setOriginalTask] = useState('');
   const [questions, setQuestions] = useState<string[]>([]);
   const [answers, setAnswers] = useState<string[]>([]);
   
@@ -38,9 +39,10 @@ export default function ChatComponent() {
 
     if (taskMode === 'idle') {
       setActiveTask({ status: 'running' });
+      setOriginalTask(userInput);
       
       try {
-        const res = await fetch('http://localhost:8000/task/start', {
+        const res = await fetch('/api/task/start', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -67,7 +69,7 @@ export default function ChatComponent() {
             timestamp: new Date().toISOString()
           });
         } else {
-          await fetch('http://localhost:8000/task/execute', {
+          await fetch('/api/task/execute', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ task_id: data.task_id })
@@ -86,16 +88,23 @@ export default function ChatComponent() {
         setActiveTask({ status: 'running' });
         
         try {
-          await fetch('http://localhost:8000/task/answer', {
+          // Format answers as a dict for the orchestrator
+          const answersDict = questions.reduce((acc, q, i) => {
+            if (newAnswers[i]) acc[q] = newAnswers[i];
+            return acc;
+          }, {} as Record<string, string>);
+
+          await fetch('/api/task/answer', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               task_id: activeTask.id,
-              answers: newAnswers
+              task: originalTask,
+              answers: answersDict
             })
           });
           
-          await fetch('http://localhost:8000/task/execute', {
+          await fetch('/api/task/execute', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ task_id: activeTask.id })

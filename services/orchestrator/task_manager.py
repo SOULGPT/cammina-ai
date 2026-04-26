@@ -89,11 +89,21 @@ async def execute_task_loop(task_id: str):
             success = False
             action_to_take = None
             
-            while retry_count < 10 and not success:
+            while retry_count < 50 and not success:
                 if retry_count == 0:
                     action_to_take = await planner.decide_next_command(step, state["history"], task_id)
+                elif retry_count < 3:
+                    # Retry same command for first 3 failures
+                    await broadcast_event(task_id, "retrying", {"attempt": retry_count, "message": "Retrying same approach..."})
+                    await asyncio.sleep(2)
+                elif retry_count == 3 or (retry_count - 3) % 10 == 0:
+                    # Switch approach after 3 failures, and every 10 failures after that
+                    await broadcast_event(task_id, "retrying", {"attempt": retry_count, "message": "Asking LLM for alternative approach..."})
+                    await asyncio.sleep(5)
+                    action_to_take = await error_handler.handle_error(step, action_to_take, result, state["history"], task_id)
                 else:
-                    await broadcast_event(task_id, "retrying", {"attempt": retry_count})
+                    await broadcast_event(task_id, "retrying", {"attempt": retry_count, "message": "Retrying new approach..."})
+                    await asyncio.sleep(2)
                 
                 if not action_to_take:
                     retry_count += 1
@@ -103,33 +113,34 @@ async def execute_task_loop(task_id: str):
                 
                 # Execute action
                 result = {}
-                if "command" in action_to_take:
-                    result = await agent.run_terminal(action_to_take["command"], action_to_take.get("cwd"))
-                elif "file_path" in action_to_take and "content" in action_to_take:
-                    result = await agent.file_write(action_to_take["file_path"], action_to_take["content"])
-                elif "file_path" in action_to_take:
-                    result = await agent.file_read(action_to_take["file_path"])
-                else:
-                    result = {"error": "Unknown action format"}
+                try:
+                    if "command" in action_to_take:
+                        result = await agent.run_terminal(action_to_take["command"], action_to_take.get("cwd"))
+                    elif "file_path" in action_to_take and "content" in action_to_take:
+                        result = await agent.file_write(action_to_take["file_path"], action_to_take["content"])
+                    elif "file_path" in action_to_take:
+                        result = await agent.file_read(action_to_take["file_path"])
+                    else:
+                        result = {"error": "Unknown action format"}
+                except Exception as e:
+                    result = {"error": str(e)}
                 
                 await broadcast_event(task_id, "result", {"result": result})
                 state["history"].append({"action": action_to_take, "result": result})
                 
                 # Check for success
-                is_error = result.get("error") or (result.get("exit_code", 0) != 0)
+                is_error = result.get("error") or (result.get("exit_code") is not None and result.get("exit_code") != 0)
                 if not is_error:
                     success = True
                 else:
                     state["errors_count"] += 1
                     retry_count += 1
-                    if retry_count < 10:
-                        action_to_take = await error_handler.handle_error(step, action_to_take, result, state["history"], task_id)
             
             if not success:
                 # Max retries reached
                 state["status"] = "paused_error"
                 await broadcast_event(task_id, "error_limit_reached", {
-                    "message": "Step failed after 10 retries. Pausing for user input.",
+                    "message": "Step failed after 50 retries. Pausing for user input.",
                     "step": step
                 })
                 break # Exit loop

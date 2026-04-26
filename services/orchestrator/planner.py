@@ -46,9 +46,16 @@ Task: "{task_description}"
 User Answers:
 {answers_str}
 
-Create a strict step-by-step plan to achieve this. Break it down into atomic actions.
+Create a strict step-by-step plan to achieve this. 
+RULES:
+1. Generate extremely specific, atomic steps.
+2. Each step must be a single, clear action.
+3. Every step must include the exact absolute file path if it involves files.
+4. Never generate vague steps like "open file in editor" or "setup project".
+5. Use "file" type for any file creation or editing.
+
 Respond ONLY with a JSON array of objects. 
-Format: [ {{"step": 1, "action": "describe what to do", "type": "terminal" | "file" | "browser"}} ]"""
+Format: [ {{"step": 1, "action": "Write hello world to /path/to/app.py", "type": "file"}} ]"""
 
     messages = [{"role": "user", "content": prompt}]
     response = await complete(messages, task_id)
@@ -73,9 +80,11 @@ Recent history:
 {history[-3:] if len(history) > 3 else history}
 
 Respond ONLY with a JSON object for the next action:
-For terminal: {{"command": "ls -la", "cwd": "/"}}
-For file write: {{"file_path": "/path", "content": "..."}}
-For file read: {{"file_path": "/path"}}"""
+1. For terminal commands: {{"command": "ls -la", "cwd": "/"}}
+2. For writing or creating files: {{"file_path": "/absolute/path/to/file", "content": "full file content here"}}
+3. For reading files: {{"file_path": "/absolute/path/to/file"}}
+
+CRITICAL: When creating or updating a file, always use the file write format (2) with the full content. Do not use terminal commands like 'echo', 'sed', or 'vi' to modify files."""
 
     messages = [{"role": "user", "content": prompt}]
     response = await complete(messages, task_id)

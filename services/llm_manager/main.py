@@ -34,7 +34,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -57,6 +57,11 @@ class CompleteResponse(BaseModel):
 
 class TestRequest(BaseModel):
     provider: str
+
+class ConfigureProvidersRequest(BaseModel):
+    openrouter: str
+    nvidia: str
+    groq: str
 
 # --- Endpoints ---
 
@@ -128,6 +133,60 @@ async def test_provider(req: TestRequest):
             "provider": req.provider,
             "error": str(e)
         }
+
+@app.post("/providers/configure", tags=["system"])
+async def configure_providers(req: ConfigureProvidersRequest):
+    if llm_router:
+        llm_router.update_keys(
+            openrouter=req.openrouter,
+            nvidia=req.nvidia,
+            groq=req.groq
+        )
+    
+    # Save to .env.local in root
+    try:
+        # Try to update existing file or create new one
+        import os
+        env_path = "../../.env.local"
+        
+        # Simple update logic: read all lines, replace if starts with KEY=, else keep.
+        # If not found, append.
+        keys_to_update = {
+            "OPENROUTER_API_KEY": req.openrouter,
+            "NVIDIA_API_KEY": req.nvidia,
+            "GROQ_API_KEY": req.groq
+        }
+        
+        lines = []
+        if os.path.exists(env_path):
+            with open(env_path, "r") as f:
+                lines = f.readlines()
+        
+        new_lines = []
+        updated_keys = set()
+        for line in lines:
+            found = False
+            for key in keys_to_update:
+                if line.startswith(f"{key}="):
+                    new_lines.append(f"{key}={keys_to_update[key]}\n")
+                    updated_keys.add(key)
+                    found = True
+                    break
+            if not found:
+                new_lines.append(line)
+        
+        for key, value in keys_to_update.items():
+            if key not in updated_keys:
+                new_lines.append(f"{key}={value}\n")
+        
+        with open(env_path, "w") as f:
+            f.writelines(new_lines)
+            
+    except Exception as e:
+        logger.error(f"Failed to save keys to .env.local: {e}")
+        # We still return success because the router was updated in memory
+    
+    return {"success": True, "message": "Providers configured"}
 
 if __name__ == "__main__":
     import uvicorn

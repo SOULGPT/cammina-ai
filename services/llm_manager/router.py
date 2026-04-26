@@ -32,13 +32,31 @@ class LLMRouter:
         
         self.httpx_client = httpx.AsyncClient(timeout=30.0)
         
-        # Mapping models
+        self.providers = ["openrouter", "nvidia", "groq", "ollama"]
         self.models = {
-            "openrouter": "meta-llama/llama-3-8b-instruct:free",
-            "nvidia": "meta/llama3-8b-instruct",
-            "groq": "llama3-8b-8192",
-            "ollama": "llama3.2"
+            "openrouter": "meta-llama/llama-3.1-8b-instruct:free",
+            "nvidia": "meta/llama-3.1-8b-instruct",
+            "groq": "llama-3.1-8b-instant",
+            "ollama": "llama3"
         }
+        self.current_provider_index = 0
+        
+    def update_keys(self, openrouter: str = None, nvidia: str = None, groq: str = None):
+        if openrouter:
+            self.clients["openrouter"] = AsyncOpenAI(
+                base_url="https://openrouter.ai/api/v1",
+                api_key=openrouter,
+            )
+        if nvidia:
+            self.clients["nvidia"] = AsyncOpenAI(
+                base_url="https://integrate.api.nvidia.com/v1",
+                api_key=nvidia,
+            )
+        if groq:
+            self.clients["groq"] = AsyncOpenAI(
+                base_url="https://api.groq.com/openai/v1",
+                api_key=groq,
+            )
 
     async def complete(self, messages: list[dict], task_id: str, max_tokens: int = 1000, max_retries: int = 3) -> dict[str, Any]:
         """

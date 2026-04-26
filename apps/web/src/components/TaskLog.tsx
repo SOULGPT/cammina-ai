@@ -10,7 +10,7 @@ export default function TaskLog() {
   useEffect(() => {
     const checkHealth = async () => {
       try {
-        const res = await fetch('http://localhost:8000/health');
+        const res = await fetch('/api/health');
         setIsOnline(res.ok);
       } catch {
         setIsOnline(false);
