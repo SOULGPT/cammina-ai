@@ -87,7 +87,7 @@ export function useTaskWebSocket(taskId: string | null) {
 
         addMessage({
           id: String(Date.now()),
-          role: 'bot',
+          role: 'agent',
           content: resultMsg,
           timestamp: data.timestamp
         });

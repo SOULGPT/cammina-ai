@@ -41,6 +41,7 @@ from pydantic import BaseModel, Field
 from auth import require_auth
 from config import settings
 from logger import log_action
+import browser
 
 # ── Logging setup ──────────────────────────────────────────────────────────────
 
@@ -345,38 +346,6 @@ async def file_delete(_: Auth, body: FileDeleteRequest) -> FileDeleteResponse:
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-class ScreenshotResponse(BaseModel):
-    image_base64: str
-    width: int
-    height: int
-
-
-@app.post("/browser/screenshot", response_model=ScreenshotResponse, tags=["mac"])
-async def take_screenshot(_: Auth) -> ScreenshotResponse:
-    """Capture the current screen and return as base64 PNG."""
-    t0 = time.perf_counter()
-    try:
-        # Run in a thread pool so it doesn't block the event loop
-        loop = asyncio.get_event_loop()
-        screenshot: Image.Image = await loop.run_in_executor(
-            None, pyautogui.screenshot
-        )
-        width, height = screenshot.size
-
-        buf = io.BytesIO()
-        screenshot.save(buf, format="PNG", optimize=True)
-        image_b64 = base64.b64encode(buf.getvalue()).decode()
-    except Exception as exc:
-        duration_ms = (time.perf_counter() - t0) * 1000
-        log_action(settings.log_file, endpoint="/browser/screenshot", action="screenshot",
-                   result="error", duration_ms=duration_ms, error=str(exc))
-        raise HTTPException(status_code=500, detail=str(exc))
-
-    duration_ms = (time.perf_counter() - t0) * 1000
-    log_action(settings.log_file, endpoint="/browser/screenshot", action="screenshot",
-               result="success", duration_ms=duration_ms,
-               extra={"width": width, "height": height})
-    return ScreenshotResponse(image_base64=image_b64, width=width, height=height)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -480,6 +449,48 @@ async def clipboard_paste(_: Auth) -> ClipboardPasteResponse:
                extra={"content_length": len(content)})
     return ClipboardPasteResponse(content=content)
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  CURSOR / SCREEN CONTROL
+# ══════════════════════════════════════════════════════════════════════════════
+
+class CursorTypeRequest(BaseModel):
+    text: str
+
+@app.post("/cursor/screenshot", tags=["mac"])
+async def cursor_screenshot(_: Auth):
+    result = browser.take_screenshot()
+    return result
+
+@app.post("/cursor/type", tags=["mac"])
+async def cursor_type(_: Auth, body: CursorTypeRequest):
+    result = browser.focus_and_type_in_cursor(body.text)
+    return result
+
+@app.post("/cursor/type_antigravity", tags=["mac"])
+async def cursor_type_antigravity(_: Auth, body: CursorTypeRequest):
+    result = browser.focus_and_type_in_antigravity(body.text)
+    return result
+
+@app.post("/cursor/focus", tags=["mac"])
+async def cursor_focus(_: Auth, body: dict):
+    result = browser.focus_app(body.get("app", "Cursor"))
+    return result
+
+@app.post("/cursor/read_terminal", tags=["mac"])
+async def cursor_read_terminal(_: Auth):
+    result = browser.take_screenshot()
+    return result
+
+@app.get("/app/active", tags=["mac"])
+async def app_active(_: Auth):
+    result = browser.get_active_window()
+    return result
+
+@app.post("/browser/screenshot", tags=["mac"])
+async def take_screenshot(_: Auth):
+    result = browser.take_screenshot()
+    return result
 
 if __name__ == "__main__":
     import uvicorn

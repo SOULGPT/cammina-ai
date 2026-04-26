@@ -55,7 +55,12 @@ export default function ChatComponent() {
 • create folder at {path}
 • run python {path}
 • copy file from {src} to {dst}
-• show desktop - List files on your desktop`,
+• show desktop - List files on your desktop
+• open cursor - Opens the Cursor application
+• screenshot - Takes a full-screen screenshot
+• type in cursor: {text} - Types text into Cursor chat
+• type in antigravity: {text} - Types text into Antigravity chat
+• focus {app} - Brings an application to the foreground`,
           timestamp: new Date().toISOString()
         });
         return true;
@@ -79,11 +84,19 @@ export default function ChatComponent() {
             content = result.error ? `Error: ${result.error}` : `File Content:\n\n${result.content}`;
           } else if (payload.action === 'terminal') {
             content = result.error ? `Error: ${result.error}` : `Output:\n${result.stdout || result.stderr || 'Success (no output)'}`;
+          } else if (payload.action === 'screenshot') {
+            content = result.image_base64 ? `Screenshot captured! [Base64 content received]` : `Error: ${result.error}`;
+          } else if (payload.action === 'app_open') {
+            content = result.success ? `Opened application: ${payload.app}` : `Error: ${result.error}`;
+          } else if (payload.action === 'cursor_type' || payload.action === 'cursor_type_antigravity') {
+            content = result.success ? `Typed text into focused window.` : `Error: ${result.error}`;
+          } else if (payload.action === 'cursor_focus') {
+            content = result.success ? `Focused application: ${payload.app}` : `Error: ${result.error}`;
           }
 
           addMessage({
             id: Date.now().toString(),
-            role: 'bot',
+            role: 'agent',
             content: `Quick Action: ${content}`,
             timestamp: new Date().toISOString()
           });
@@ -153,6 +166,39 @@ export default function ChatComponent() {
       // 9. Show Desktop
       if (taskLower === "show desktop") {
         await executeQuick({ action: 'terminal', command: `ls -la /Users/miruzaankhan/Desktop` });
+        return true;
+      }
+
+      // 10. Open Cursor
+      if (taskLower === "open cursor") {
+        await executeQuick({ action: 'app_open', app: 'Cursor' });
+        return true;
+      }
+
+      // 11. Screenshot
+      if (taskLower === "screenshot") {
+        await executeQuick({ action: 'screenshot' });
+        return true;
+      }
+
+      // 12. Type in Cursor
+      if (taskLower.startsWith("type in cursor:")) {
+        const text = message.split(/type in cursor:/i)[1].trim();
+        await executeQuick({ action: 'cursor_type', text: text });
+        return true;
+      }
+
+      // 13. Type in Antigravity
+      if (taskLower.startsWith("type in antigravity:")) {
+        const text = message.split(/type in antigravity:/i)[1].trim();
+        await executeQuick({ action: 'cursor_type_antigravity', text: text });
+        return true;
+      }
+
+      // 14. Focus App
+      const focusMatch = message.match(/focus\s+(.+)/i);
+      if (focusMatch && !taskLower.includes("cursor") && !taskLower.includes("antigravity")) {
+        await executeQuick({ action: 'cursor_focus', app: focusMatch[1] });
         return true;
       }
 

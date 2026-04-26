@@ -148,6 +148,26 @@ async def task_quick(request: dict):
             async with httpx.AsyncClient() as c:
                 r = await c.post(f"{url}/file/read", headers=headers, json={"path": request.get("path")})
             return r.json()
+        elif action == "screenshot":
+            async with httpx.AsyncClient(timeout=30.0) as c:
+                r = await c.post(f"{url}/browser/screenshot", headers=headers)
+            return r.json()
+        elif action == "app_open":
+            async with httpx.AsyncClient(timeout=30.0) as c:
+                r = await c.post(f"{url}/app/open", headers=headers, json={"app_name": request.get("app", "Cursor")})
+            return r.json()
+        elif action == "cursor_type":
+            async with httpx.AsyncClient(timeout=30.0) as c:
+                r = await c.post(f"{url}/cursor/type", headers=headers, json={"text": request.get("text", "")})
+            return r.json()
+        elif action == "cursor_type_antigravity":
+            async with httpx.AsyncClient(timeout=30.0) as c:
+                r = await c.post(f"{url}/cursor/type_antigravity", headers=headers, json={"text": request.get("text", "")})
+            return r.json()
+        elif action == "cursor_focus":
+            async with httpx.AsyncClient(timeout=30.0) as c:
+                r = await c.post(f"{url}/cursor/focus", headers=headers, json={"app": request.get("app", "Cursor")})
+            return r.json()
         else:
             return {"error": f"Unknown action: {action}"}
     except Exception as e:
