@@ -1,0 +1,2 @@
+# Shared configuration for Cammina-AI services
+# Place service-agnostic config here (e.g. logging.yaml, otel.yaml)
