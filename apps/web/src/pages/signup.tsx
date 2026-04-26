@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { supabase } from "../lib/supabase";
-import { useNavigate, Link } from "react-router-dom";
+import { Link } from "react-router-dom";
+
 export default function SignUp() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -8,7 +9,7 @@ export default function SignUp() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
   const [loading, setLoading] = useState(false);
-  const navigate = useNavigate();
+
   const handleSignUp = async () => {
     setError("");
     if (password !== confirm) {
@@ -24,6 +25,7 @@ export default function SignUp() {
     }
     setLoading(false);
   };
+
   return (
     <div style={{ background: "#0f0f0f", minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
       <div style={{ background: "#1a1a1a", padding: "40px", borderRadius: "12px", width: "400px", border: "1px solid #2d2d2d" }}>
@@ -36,19 +38,36 @@ export default function SignUp() {
         ) : (
           <>
             {error && <p style={{ color: "#ef4444", marginBottom: "16px", fontSize: "14px" }}>{error}</p>}
-            <input type="email" placeholder="[you@example.com](mailto:you@example.com)" value={email} onChange={e => setEmail([e.target](http://e.target).value)}
-              style={{ width: "100%", padding: "12px", background: "#0f0f0f", border: "1px solid #2d2d2d", borderRadius: "8px", color: "white", marginBottom: "16px", boxSizing: "border-box" }} />
-            <input type="password" placeholder="Password" value={password} onChange={e => setPassword([e.target](http://e.target).value)}
-              style={{ width: "100%", padding: "12px", background: "#0f0f0f", border: "1px solid #2d2d2d", borderRadius: "8px", color: "white", marginBottom: "16px", boxSizing: "border-box" }} />
-            <input type="password" placeholder="Confirm Password" value={confirm} onChange={e => setConfirm([e.target](http://e.target).value)}
-              style={{ width: "100%", padding: "12px", background: "#0f0f0f", border: "1px solid #2d2d2d", borderRadius: "8px", color: "white", marginBottom: "24px", boxSizing: "border-box" }} />
-            <button onClick={handleSignUp} disabled={loading}
-              style={{ width: "100%", padding: "12px", background: "#7c3aed", border: "none", borderRadius: "8px", color: "white", fontSize: "16px", cursor: "pointer", marginBottom: "16px" }}>
+            <input
+              type="email"
+              placeholder="you@example.com"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              style={{ width: "100%", padding: "12px", background: "#0f0f0f", border: "1px solid #2d2d2d", borderRadius: "8px", color: "white", marginBottom: "16px", boxSizing: "border-box" }}
+            />
+            <input
+              type="password"
+              placeholder="Password"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              style={{ width: "100%", padding: "12px", background: "#0f0f0f", border: "1px solid #2d2d2d", borderRadius: "8px", color: "white", marginBottom: "16px", boxSizing: "border-box" }}
+            />
+            <input
+              type="password"
+              placeholder="Confirm Password"
+              value={confirm}
+              onChange={e => setConfirm(e.target.value)}
+              style={{ width: "100%", padding: "12px", background: "#0f0f0f", border: "1px solid #2d2d2d", borderRadius: "8px", color: "white", marginBottom: "24px", boxSizing: "border-box" }}
+            />
+            <button
+              onClick={handleSignUp}
+              disabled={loading}
+              style={{ width: "100%", padding: "12px", background: "#7c3aed", border: "none", borderRadius: "8px", color: "white", fontSize: "16px", cursor: "pointer", marginBottom: "16px" }}
+            >
               {loading ? "Creating account..." : "Sign Up"}
             </button>
             <p style={{ color: "#888", textAlign: "center", fontSize: "14px" }}>
-              Already have an account?{" "}
-              <Link to="/login" style={{ color: "#7c3aed" }}>Sign in</Link>
+              Already have an account? <Link to="/login" style={{ color: "#7c3aed" }}>Sign in</Link>
             </p>
           </>
         )}

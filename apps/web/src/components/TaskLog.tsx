@@ -1,9 +1,27 @@
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useStore } from '../stores';
 import { Play, Pause, Square, Cpu, Server, CheckCircle2, AlertCircle } from 'lucide-react';
 
 export default function TaskLog() {
-  const { activeTask, activeProvider, wsConnected } = useStore();
+  const { activeTask, activeProvider } = useStore();
+  const [isOnline, setIsOnline] = useState(false);
+
+  useEffect(() => {
+    const checkHealth = async () => {
+      try {
+        const res = await fetch('http://localhost:8000/health');
+        setIsOnline(res.ok);
+      } catch {
+        setIsOnline(false);
+      }
+    };
+
+    checkHealth(); // Initial check
+    const interval = setInterval(checkHealth, 5000); // Check every 5s
+
+    return () => clearInterval(interval);
+  }, []);
 
   const progress = activeTask.totalSteps > 0 
     ? Math.min(100, Math.round((activeTask.currentStep / activeTask.totalSteps) * 100))
@@ -13,17 +31,17 @@ export default function TaskLog() {
     <div className="flex flex-col h-full bg-[#121212] p-6 gap-6 overflow-y-auto">
       <div>
         <h2 className="text-lg font-semibold text-gray-100 flex items-center gap-2 mb-4">
-          <Server className="w-5 h-5 text-purple-500" />
+          <Server className="w-5 h-5 text-[#7c3aed]" />
           Task Execution
         </h2>
         
         {/* Status Card */}
         <div className="bg-[#1a1a1a] border border-[#2d2d2d] rounded-xl p-4 shadow-lg mb-6">
           <div className="flex justify-between items-center mb-3">
-            <span className="text-sm font-medium text-gray-400">Status</span>
+            <span className="text-sm font-medium text-gray-400">Orchestrator Status</span>
             <span className="flex items-center gap-2 text-xs font-medium px-2.5 py-1 rounded-full bg-[#2d2d2d]">
-              <span className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-green-500' : 'bg-red-500'}`} />
-              {wsConnected ? 'Connected' : 'Offline'}
+              <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-500' : 'bg-red-500'}`} />
+              {isOnline ? 'Online' : 'Offline'}
             </span>
           </div>
           <div className="flex items-center gap-3">

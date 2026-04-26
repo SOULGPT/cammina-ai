@@ -5,8 +5,13 @@ import { Send, Bot, User, Command } from 'lucide-react';
 
 export default function ChatComponent() {
   const [input, setInput] = useState('');
+  const [taskMode, setTaskMode] = useState<'idle' | 'answering'>('idle');
+  const [questions, setQuestions] = useState<string[]>([]);
+  const [answers, setAnswers] = useState<string[]>([]);
+  
   const messages = useStore((state) => state.messages);
   const activeTask = useStore((state) => state.activeTask);
+  const { addMessage, setActiveTask } = useStore();
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -19,17 +24,96 @@ export default function ChatComponent() {
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim()) return;
+    if (!input.trim() || activeTask.status === 'running') return;
 
-    // TODO: implement API call to start/answer task
-    useStore.getState().addMessage({
+    const userInput = input.trim();
+    setInput('');
+
+    addMessage({
       id: Date.now().toString(),
       role: 'user',
-      content: input,
+      content: userInput,
       timestamp: new Date().toISOString()
     });
-    
-    setInput('');
+
+    if (taskMode === 'idle') {
+      setActiveTask({ status: 'running' });
+      
+      try {
+        const res = await fetch('http://localhost:8000/task/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            task: userInput,
+            project_id: "default",
+            project_name: "Default"
+          })
+        });
+
+        if (!res.ok) throw new Error('Failed to start task');
+        const data = await res.json();
+        
+        setActiveTask({ id: data.task_id, status: 'idle' });
+        
+        if (data.questions && data.questions.length > 0) {
+          setQuestions(data.questions);
+          setAnswers([]);
+          setTaskMode('answering');
+          
+          addMessage({
+            id: (Date.now() + 1).toString(),
+            role: 'system',
+            content: `I have a few clarifying questions:\n\n${data.questions.map((q: string, i: number) => `${i + 1}. ${q}`).join('\n')}\n\n(Answer them sequentially, or type 'skip' to proceed immediately)`,
+            timestamp: new Date().toISOString()
+          });
+        } else {
+          await fetch('http://localhost:8000/task/execute', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ task_id: data.task_id })
+          });
+        }
+      } catch (err) {
+        console.error(err);
+        setActiveTask({ status: 'error' });
+      }
+    } else if (taskMode === 'answering') {
+      const newAnswers = [...answers, userInput];
+      setAnswers(newAnswers);
+      
+      if (newAnswers.length >= questions.length || userInput.toLowerCase() === 'skip') {
+        setTaskMode('idle');
+        setActiveTask({ status: 'running' });
+        
+        try {
+          await fetch('http://localhost:8000/task/answer', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              task_id: activeTask.id,
+              answers: newAnswers
+            })
+          });
+          
+          await fetch('http://localhost:8000/task/execute', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ task_id: activeTask.id })
+          });
+        } catch (err) {
+          console.error(err);
+          setActiveTask({ status: 'error' });
+        }
+      } else {
+        // Prompt for the next question
+        addMessage({
+          id: (Date.now() + 1).toString(),
+          role: 'system',
+          content: `Got it. Next: ${questions[newAnswers.length]}`,
+          timestamp: new Date().toISOString()
+        });
+      }
+    }
   };
 
   return (
