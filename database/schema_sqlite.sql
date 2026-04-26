@@ -1,39 +1,29 @@
--- ============================================
--- CAMMINA AI - Complete Database Schema
--- Supabase / PostgreSQL Version
--- ============================================
-
--- Projects table
 CREATE TABLE IF NOT EXISTS projects (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL UNIQUE,
   description TEXT,
   folder_path TEXT,
   status TEXT DEFAULT 'active',
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  completed_at TIMESTAMPTZ,
-  completed BOOLEAN DEFAULT FALSE
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  completed_at DATETIME,
+  completed INTEGER DEFAULT 0
 );
-
--- Tasks table
 CREATE TABLE IF NOT EXISTS tasks (
   id TEXT PRIMARY KEY,
   project_id TEXT REFERENCES projects(id),
   title TEXT NOT NULL,
   description TEXT,
   status TEXT DEFAULT 'pending',
-  started_at TIMESTAMPTZ,
-  completed_at TIMESTAMPTZ,
+  started_at DATETIME,
+  completed_at DATETIME,
   checkpoint_data TEXT,
   current_step INTEGER DEFAULT 0,
   total_steps INTEGER,
   provider_used TEXT,
   error_count INTEGER DEFAULT 0,
   messages_history TEXT,
-  timestamp TIMESTAMPTZ DEFAULT NOW()
+  timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
 );
-
--- Task steps table
 CREATE TABLE IF NOT EXISTS task_steps (
   id TEXT PRIMARY KEY,
   task_id TEXT REFERENCES tasks(id),
@@ -42,10 +32,8 @@ CREATE TABLE IF NOT EXISTS task_steps (
   action_type TEXT,
   result TEXT,
   status TEXT,
-  timestamp TIMESTAMPTZ DEFAULT NOW()
+  timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
 );
-
--- Errors table
 CREATE TABLE IF NOT EXISTS errors (
   id TEXT PRIMARY KEY,
   task_id TEXT REFERENCES tasks(id),
@@ -57,10 +45,8 @@ CREATE TABLE IF NOT EXISTS errors (
   fix_attempted TEXT,
   fix_result TEXT,
   provider_used TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
-
--- Skills table (shared across all projects)
 CREATE TABLE IF NOT EXISTS skills (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL UNIQUE,
@@ -69,42 +55,34 @@ CREATE TABLE IF NOT EXISTS skills (
   learned_from_project TEXT,
   success_rate REAL DEFAULT 0.0,
   usage_count INTEGER DEFAULT 0,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW()
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
-
--- Provider status table
 CREATE TABLE IF NOT EXISTS provider_status (
   id TEXT PRIMARY KEY,
   provider_name TEXT NOT NULL UNIQUE,
   status TEXT DEFAULT 'active',
-  last_used TIMESTAMPTZ,
-  rate_limit_reset TIMESTAMPTZ,
+  last_used DATETIME,
+  rate_limit_reset DATETIME,
   requests_today INTEGER DEFAULT 0,
   last_error TEXT,
-  reset_at TIMESTAMPTZ
+  reset_at DATETIME
 );
-
--- Environment variables table (encrypted per project)
 CREATE TABLE IF NOT EXISTS env_variables (
   id TEXT PRIMARY KEY,
   project_id TEXT REFERENCES projects(id),
   key_name TEXT NOT NULL,
   encrypted_value TEXT NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
-
--- Memory snapshots table
 CREATE TABLE IF NOT EXISTS memory_snapshots (
   id TEXT PRIMARY KEY,
   project_id TEXT REFERENCES projects(id),
   task_id TEXT REFERENCES tasks(id),
   snapshot_type TEXT,
   content TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
-
--- Agent actions log table
 CREATE TABLE IF NOT EXISTS agent_actions (
   id TEXT PRIMARY KEY,
   task_id TEXT REFERENCES tasks(id),
@@ -113,12 +91,8 @@ CREATE TABLE IF NOT EXISTS agent_actions (
   action_details TEXT,
   result TEXT,
   duration_ms INTEGER,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
-
--- ============================================
--- INDEXES for faster queries
--- ============================================
 CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_task_steps_task ON task_steps(task_id);
@@ -127,14 +101,9 @@ CREATE INDEX IF NOT EXISTS idx_errors_project ON errors(project_id);
 CREATE INDEX IF NOT EXISTS idx_provider_status_name ON provider_status(provider_name);
 CREATE INDEX IF NOT EXISTS idx_agent_actions_task ON agent_actions(task_id);
 CREATE INDEX IF NOT EXISTS idx_memory_snapshots_project ON memory_snapshots(project_id);
-
--- ============================================
--- DEFAULT DATA - Insert default providers
--- ============================================
-INSERT INTO provider_status (id, provider_name, status, requests_today)
-VALUES 
+INSERT OR IGNORE INTO provider_status (id, provider_name, status, requests_today)
+VALUES
   ('prov-001', 'openrouter', 'active', 0),
   ('prov-002', 'nvidia', 'active', 0),
   ('prov-003', 'groq', 'active', 0),
-  ('prov-004', 'ollama', 'active', 0)
-ON CONFLICT DO NOTHING;
+  ('prov-004', 'ollama', 'active', 0);
