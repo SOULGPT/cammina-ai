@@ -1,0 +1,13 @@
+providers:
+  - name: openrouter
+    priority: 1
+    enabled: true
+  - name: nvidia
+    priority: 2
+    enabled: true
+  - name: groq
+    priority: 3
+    enabled: true
+  - name: ollama
+    priority: 4
+    enabled: true
