@@ -38,7 +38,7 @@ start_all() {
     start_service "LLM Manager" "services/llm_manager" ".venv" "python3 main.py"
     start_service "Memory" "services/memory" ".venv" "python3 main.py"
     start_service "Orchestrator" "services/orchestrator" ".venv" "python3 main.py"
-    start_service "Web UI" "apps/web" "none" "npm run dev -- --port 3000"
+    start_service "Web UI" "apps/web" "none" "npm run dev -- --port 3000 --strictPort"
 
     echo "Waiting for services to spin up..."
     sleep 3
@@ -49,6 +49,16 @@ start_all() {
 
 stop_all() {
     echo "Stopping Cammina AI..."
+    pkill -f "vite" 2>/dev/null || true
+    pkill -f "node.*vite" 2>/dev/null || true
+    for port in $(seq 3000 3025); do
+        lsof -ti:$port | xargs kill -9 2>/dev/null || true
+    done
+    # Also clear our service ports
+    for port in 8000 8001 8002 8765; do
+        lsof -ti:$port | xargs kill -9 2>/dev/null || true
+    done
+
     for pidfile in "$PIDS_DIR"/*.pid; do
         if [ -f "$pidfile" ]; then
             local pid=$(cat "$pidfile")

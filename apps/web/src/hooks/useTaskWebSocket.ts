@@ -55,7 +55,7 @@ export function useTaskWebSocket(taskId: string | null) {
         addMessage({
           id: String(Date.now()),
           role: 'system',
-          content: `Starting step ${data.step.step}: ${data.step.action}`,
+          content: `Starting step ${data.step.step}: ${data.step.description || data.step.action || 'Analyzing...'}`,
           timestamp: data.timestamp
         });
         break;
@@ -69,6 +69,30 @@ export function useTaskWebSocket(taskId: string | null) {
         });
         break;
         
+      case 'step_result':
+        let resultMsg = '';
+        const { action_type, action, result } = data;
+        
+        if (result.error) {
+          resultMsg = `❌ Step failed: ${result.error}`;
+        } else if (action_type === 'terminal' || action_type === 'file_list') {
+          resultMsg = `Output:\n${result.stdout || result.stderr || '(No output)'}`;
+        } else if (action_type === 'file_read') {
+          resultMsg = `File Content:\n\n${result.content || '(Empty file)'}`;
+        } else if (action_type === 'file_write') {
+          resultMsg = `✅ File created successfully at ${action.file_path}`;
+        } else {
+          resultMsg = `Step completed: ${JSON.stringify(result)}`;
+        }
+
+        addMessage({
+          id: String(Date.now()),
+          role: 'bot',
+          content: resultMsg,
+          timestamp: data.timestamp
+        });
+        break;
+
       case 'result':
         // Optional: show result in terminal log rather than main chat
         break;

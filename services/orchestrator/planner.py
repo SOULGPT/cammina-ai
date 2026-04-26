@@ -1,6 +1,7 @@
 import httpx
-from config import settings
+import re
 import logging
+from config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -38,42 +39,72 @@ Return the questions as a JSON array of strings ONLY. Example: ["Q1", "Q2"]"""
         logger.error(f"Failed to parse questions JSON: {response}")
     return []
 
-SYSTEM_PROMPT = """You are a task planner for Cammina AI.
-You break tasks into simple steps.
+PLANNER_SYSTEM_PROMPT = """
+You are a task planner for Cammina AI running on macOS.
+You break tasks into atomic steps.
 
-CRITICAL RULES - FOLLOW EXACTLY:
-1. To write a file, ALWAYS use action type "file_write" with file_path and content
-2. NEVER use terminal commands to create or edit files
-3. NEVER add steps like "open terminal", "open text editor", "save file", "close file"
-4. NEVER use "touch", "nano", "vim", "open", "pip install" unless explicitly asked
-5. NEVER delete files unless the task says "delete" or "remove"
-6. For file creation tasks, use ONLY 2 steps:
-   Step 1: Write the file using file_write action
-   Step 2: Verify the file exists using file_read action
+AVAILABLE ACTION TYPES (use ONLY these):
+1. file_write   - Write content to a file
+2. file_read    - Read a file
+3. file_list    - List files in a directory  
+4. terminal     - Run a shell command
+5. done         - Mark task complete
 
-Output steps as JSON array:
+OUTPUT FORMAT - return a JSON array ONLY, no explanation:
 [
   {
     "step": 1,
-    "description": "Write the file",
+    "description": "Brief description",
     "action_type": "file_write",
-    "file_path": "/full/path/to/file.py",
+    "file_path": "/absolute/path/to/file.py",
     "content": "file content here"
   },
   {
     "step": 2,
     "description": "Verify file exists",
     "action_type": "file_read",
-    "file_path": "/full/path/to/file.py"
+    "file_path": "/absolute/path/to/file.py"
   }
 ]
 
-Keep it simple. Maximum 5 steps for simple tasks."""
+STRICT RULES:
+1. NEVER use action_type other than the 5 listed above
+2. For file_write: always include file_path and content
+3. For terminal: always include command and cwd
+4. For file_read/file_list: always include file_path
+5. NEVER add steps like "open terminal", "open editor", "save file", "close file"
+6. NEVER use terminal to create files - use file_write instead
+7. NEVER run: apt-get, brew install, nano, vim, open, touch, cat > file
+8. NEVER delete files unless task explicitly says "delete" or "remove"
+9. Keep steps minimal - file creation = 1 step (file_write), not 5 steps
+10. Always use absolute paths starting with /Users/miruzaankhan
+
+EXAMPLES:
+
+Task: "create a python file that prints hello"
+CORRECT:
+[{"step":1,"description":"Create python file","action_type":"file_write","file_path":"/Users/miruzaankhan/Desktop/hello.py","content":"print('hello')"}]
+
+Task: "create a react app called myapp"
+CORRECT:
+[
+  {"step":1,"description":"Create project with npx","action_type":"terminal","command":"npx create-react-app myapp","cwd":"/Users/miruzaankhan/Desktop"},
+  {"step":2,"description":"List created files","action_type":"file_list","file_path":"/Users/miruzaankhan/Desktop/myapp"}
+]
+
+Task: "push my repo to github"
+CORRECT:
+[
+  {"step":1,"description":"Add all files","action_type":"terminal","command":"git add .","cwd":"/Users/miruzaankhan/Desktop/cammina"},
+  {"step":2,"description":"Commit changes","action_type":"terminal","command":"git commit -m 'update'","cwd":"/Users/miruzaankhan/Desktop/cammina"},
+  {"step":3,"description":"Push to origin","action_type":"terminal","command":"git push origin main","cwd":"/Users/miruzaankhan/Desktop/cammina"}
+]
+"""
 
 async def create_plan(task_description: str, answers: dict, task_id: str) -> list[dict]:
     """Ask LLM to create a step-by-step execution plan."""
     answers_str = "\\n".join([f"Q: {k}\\nA: {v}" for k, v in answers.items()])
-    prompt = f"""{SYSTEM_PROMPT}
+    prompt = f"""{PLANNER_SYSTEM_PROMPT}
 
 Task: "{task_description}"
 User Answers:
@@ -82,40 +113,46 @@ User Answers:
     messages = [{"role": "user", "content": prompt}]
     response = await complete(messages, task_id)
     
+    # Strip markdown backticks if present
+    clean_response = response.strip()
+    if clean_response.startswith("```"):
+        clean_response = re.sub(r'^```[a-zA-Z]*\\n|\\n```$', '', clean_response, flags=re.DOTALL)
+    
     try:
         import json
-        plan = json.loads(response)
+        plan = json.loads(clean_response)
         if isinstance(plan, list):
             return plan
     except Exception as e:
         logger.error(f"Failed to parse plan JSON: {response}")
     
     # Fallback plan
-    return [{"step": 1, "action": "Analyze task and begin execution", "type": "terminal"}]
+    return [{"step": 1, "description": "Manual task analysis", "action_type": "terminal", "command": "ls -la", "cwd": "/Users/miruzaankhan"}]
 
-async def decide_next_command(step: dict, history: list, task_id: str) -> dict:
-    """Ask LLM to provide the exact command or file content to execute."""
-    desc = step.get('description', step.get('action', 'Unknown step'))
-    atype = step.get('action_type', step.get('type', 'terminal'))
-    
-    prompt = f"""You are Cammina AI execution agent.
-We are on step: {desc} (Type: {atype})
+async def get_alternative_approach(step: dict, error: str, history: list, task_id: str) -> dict:
+    """Ask LLM for a completely different approach to the failed step."""
+    prompt = f"""The previous step failed.
+Step: {step.get('description')}
+Action attempted: {step.get('action_type')}
+Error received: {error}
 
 Recent history:
 {history[-3:] if len(history) > 3 else history}
 
-CRITICAL RULES:
-1. When creating or updating a file, always use the file write format (2) with the full content. Do not use terminal commands like 'echo', 'sed', or 'vi' to modify files.
-2. NEVER use 'rm' or 'delete' commands unless the original task description explicitly requested deletion.
-3. Once a file is written successfully, do not attempt to 'close' or 'cleanup' it.
+Do NOT retry the same command. 
+Suggest a completely different approach using ONLY: file_write, file_read, file_list, terminal, done.
+Return a SINGLE JSON object representing the new action.
 """
-
     messages = [{"role": "user", "content": prompt}]
     response = await complete(messages, task_id)
     
+    clean_response = response.strip()
+    if clean_response.startswith("```"):
+        clean_response = re.sub(r'^```[a-zA-Z]*\\n|\\n```$', '', clean_response, flags=re.DOTALL)
+        
     try:
         import json
-        return json.loads(response)
+        return json.loads(clean_response)
     except Exception as e:
-        logger.error(f"Failed to parse command JSON: {response}")
+        logger.error(f"Failed to parse alternative approach JSON: {response}")
         return {}

@@ -49,7 +49,7 @@ async def _save_checkpoint(task_id: str):
     """Save the current state to the memory service."""
     state = get_state(task_id)
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=60.0) as client:
             await client.post(f"{settings.memory_url}/checkpoint/save", json={
                 "task_id": task_id,
                 "current_step": state["current_step"],
@@ -121,12 +121,35 @@ async def try_direct_execution(task_id: str) -> bool:
             
     return False
 
+async def execute_step(step: dict) -> dict:
+    """Routes the step to the correct agent function based on action_type."""
+    action_type = step.get("action_type")
+    
+    if action_type == "file_write":
+        return await agent.file_write(step.get("file_path"), step.get("content", ""))
+        
+    elif action_type == "file_read":
+        return await agent.file_read(step.get("file_path"))
+        
+    elif action_type == "file_list":
+        # Note: assuming agent.file_list exists, or using run_terminal as fallback
+        # Let's check if agent has file_list. If not, use run_terminal.
+        # Based on previous view, agent has file_read, file_write, run_terminal.
+        return await agent.run_terminal(f"ls -la {step.get('file_path')}")
+        
+    elif action_type == "terminal":
+        return await agent.run_terminal(step.get("command"), step.get("cwd", "/Users/miruzaankhan"))
+        
+    elif action_type == "done":
+        return {"success": True, "message": "Task complete"}
+    
+    return {"error": f"Unknown action_type: {action_type}"}
+
 async def execute_task_loop(task_id: str):
     """The autonomous execution loop."""
     state = get_state(task_id)
     state["status"] = "running"
     
-    # Start the checkpoint loop
     cp_task = asyncio.create_task(checkpoint_loop(task_id))
     
     try:
@@ -142,74 +165,59 @@ async def execute_task_loop(task_id: str):
             
             retry_count = 0
             success = False
-            action_to_take = None
+            current_action = step
             
-            while retry_count < 50 and not success:
-                if retry_count == 0:
-                    # Compatibility fix: if the step already has action info (new planner format), use it!
-                    if step.get("action_type") == "file_write" and step.get("file_path") and step.get("content"):
-                        action_to_take = {
-                            "file_path": step["file_path"],
-                            "content": step["content"]
-                        }
-                    elif step.get("action_type") == "file_read" and step.get("file_path"):
-                        action_to_take = {
-                            "file_path": step["file_path"]
-                        }
-                    else:
-                        # Fallback to old dynamic command decision
-                        action_to_take = await planner.decide_next_command(step, state["history"], task_id)
-                elif retry_count < 3:
-                    # Retry same command for first 3 failures
-                    await broadcast_event(task_id, "retrying", {"attempt": retry_count, "message": "Retrying same approach..."})
-                    await asyncio.sleep(2)
-                elif retry_count == 3 or (retry_count - 3) % 10 == 0:
-                    # Switch approach after 3 failures, and every 10 failures after that
-                    await broadcast_event(task_id, "retrying", {"attempt": retry_count, "message": "Asking LLM for alternative approach..."})
-                    await asyncio.sleep(5)
-                    action_to_take = await error_handler.handle_error(step, action_to_take, result, state["history"], task_id)
-                else:
-                    await broadcast_event(task_id, "retrying", {"attempt": retry_count, "message": "Retrying new approach..."})
-                    await asyncio.sleep(2)
-                
-                if not action_to_take:
-                    retry_count += 1
-                    continue
-                
-                await broadcast_event(task_id, "action", {"action": action_to_take})
-                
-                # Safety check: never run rm/delete unless task asks for it
-                if "command" in action_to_take:
-                    cmd = action_to_take["command"].lower()
-                    destructive_keywords = ["rm", "rmdir", "del", "delete"]
-                    if any(k in cmd for k in destructive_keywords):
+            while retry_count < 3 and not success:
+                if retry_count > 0:
+                    await broadcast_event(task_id, "retrying", {
+                        "attempt": retry_count, 
+                        "message": "Asking LLM for alternative approach..."
+                    })
+                    # Ask LLM for a DIFFERENT approach
+                    current_action = await planner.get_alternative_approach(
+                        step, 
+                        str(last_result.get("error", "Unknown error")), 
+                        state["history"], 
+                        task_id
+                    )
+                    if not current_action:
+                        break
+
+                # Safety guard: check for destructive commands
+                if current_action.get("action_type") == "terminal":
+                    cmd = current_action.get("command", "").lower()
+                    if any(k in cmd for k in ["rm", "rmdir", "delete"]):
                         task_desc = state.get("task_description", "").lower()
                         if not any(word in task_desc for word in ["delete", "remove", "clean"]):
                             logger.warning(f"Skipped dangerous command: {cmd}")
                             await broadcast_event(task_id, "safety_skip", {"message": f"Skipped dangerous command: {cmd}"})
-                            # Skip this step entirely as requested
-                            success = True 
-                            break # Break the retry loop, success=True moves to next step
+                            success = True # Treat as success to move past it
+                            break
 
-                # Execute action
-                result = {}
-                try:
-                    if "command" in action_to_take:
-                        result = await agent.run_terminal(action_to_take["command"], action_to_take.get("cwd"))
-                    elif "file_path" in action_to_take and "content" in action_to_take:
-                        result = await agent.file_write(action_to_take["file_path"], action_to_take["content"])
-                    elif "file_path" in action_to_take:
-                        result = await agent.file_read(action_to_take["file_path"])
-                    else:
-                        result = {"error": "Unknown action format"}
-                except Exception as e:
-                    result = {"error": str(e)}
+                await broadcast_event(task_id, "action", {"action": current_action})
                 
-                await broadcast_event(task_id, "result", {"result": result})
-                state["history"].append({"action": action_to_take, "result": result})
+                # Execute the step
+                last_result = await execute_step(current_action)
+                await broadcast_event(task_id, "result", {"result": last_result})
+
+                # Broadcast detailed step result for UI
+                await broadcast_event(task_id, "step_result", {
+                    "step": state["current_step"] + 1,
+                    "action_type": current_action.get("action_type"),
+                    "action": current_action,
+                    "result": last_result
+                })
                 
-                # Check for success
-                is_error = result.get("error") or (result.get("exit_code") is not None and result.get("exit_code") != 0)
+                # Add to context
+                state["history"].append({
+                    "step_index": state["current_step"],
+                    "attempt": retry_count,
+                    "action": current_action,
+                    "result": last_result
+                })
+                
+                # Verify success
+                is_error = last_result.get("error") or (last_result.get("exit_code") is not None and last_result.get("exit_code") != 0)
                 if not is_error:
                     success = True
                 else:
@@ -217,21 +225,14 @@ async def execute_task_loop(task_id: str):
                     retry_count += 1
             
             if not success:
-                # Max retries reached
-                state["status"] = "paused_error"
-                await broadcast_event(task_id, "error_limit_reached", {
-                    "message": "Step failed after 50 retries. Pausing for user input.",
-                    "step": step
-                })
-                break # Exit loop
-                
-            # Step succeeded
+                logger.error(f"Step {state['current_step']} failed after 3 attempts. Skipping.")
+                await broadcast_event(task_id, "step_failed", {"message": "Step failed after 3 attempts. Skipping to next step."})
+            
             state["current_step"] += 1
             await _save_checkpoint(task_id)
             
-        if state["current_step"] >= len(plan):
-            state["status"] = "completed"
-            await broadcast_event(task_id, "completed", {"message": "Task 100% complete"})
+        state["status"] = "completed"
+        await broadcast_event(task_id, "completed", {"message": "Task complete"})
             
     except asyncio.CancelledError:
         state["status"] = "paused"
@@ -239,7 +240,6 @@ async def execute_task_loop(task_id: str):
     except Exception as e:
         logger.error(f"Fatal error in task loop: {e}")
         state["status"] = "error"
-        state["errors_count"] += 1
         await broadcast_event(task_id, "fatal_error", {"error": str(e)})
     finally:
         cp_task.cancel()

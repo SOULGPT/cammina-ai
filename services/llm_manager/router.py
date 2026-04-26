@@ -30,9 +30,18 @@ class LLMRouter:
                 api_key=settings.groq_api_key,
             )
         
-        self.httpx_client = httpx.AsyncClient(timeout=30.0)
+        self.httpx_client = httpx.AsyncClient(timeout=90.0)
         
-        self.providers = ["openrouter", "nvidia", "groq", "ollama"]
+        import os
+        self.providers = []
+        if os.getenv("OPENROUTER_API_KEY"):
+            self.providers.append("openrouter")
+        if os.getenv("NVIDIA_API_KEY"):
+            self.providers.append("nvidia")  
+        if os.getenv("GROQ_API_KEY"):
+            self.providers.append("groq")
+        self.providers.append("ollama")  # always available as fallback
+
         self.models = {
             "openrouter": "meta-llama/llama-3.1-8b-instruct:free",
             "nvidia": "meta/llama-3.1-8b-instruct",
@@ -127,7 +136,17 @@ class LLMRouter:
                     logger.warning(f"Timeout for {provider_name}")
                     database.save_checkpoint(task_id, current_step, messages)
                     continue # Try next provider
+                except openai.AuthenticationError:
+                    logger.error(f"Authentication error for {provider_name}. Removing from session.")
+                    if provider_name in self.providers:
+                        self.providers.remove(provider_name)
+                    continue
                 except httpx.HTTPStatusError as e:
+                    if e.response.status_code == 401:
+                        logger.error(f"Authentication error for {provider_name}. Removing from session.")
+                        if provider_name in self.providers:
+                            self.providers.remove(provider_name)
+                        continue
                     if e.response.status_code == 429:
                         logger.warning(f"Rate limit hit for {provider_name}")
                         database.mark_rate_limited(provider_name, reset_after_seconds=60)
