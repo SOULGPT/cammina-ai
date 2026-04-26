@@ -37,102 +37,130 @@ export default function ChatComponent() {
       timestamp: new Date().toISOString()
     });
 
-    if (taskMode === 'idle') {
-      // Check for Quick Task patterns
-      const taskLower = userInput.toLowerCase();
+    const handleQuickAction = async (message: string): Promise<boolean> => {
+      const taskLower = message.toLowerCase();
       
-      // 1. Quick File Write: "create a file at {path} with content: {content}"
-      if (taskLower.startsWith("create a file at")) {
-        const pathMatch = userInput.match(/create a file at\s+(\S+)\s+with content:\s*(.+)/i);
-        if (pathMatch) {
-          const path = pathMatch[1];
-          const content = pathMatch[2];
-          
-          setActiveTask({ status: 'running' });
-          try {
-            const res = await fetch('/api/task/quick', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ action: "file_write", path: path, content: content })
-            });
-            const result = await res.json();
-            
-            if (result.success) {
-              addMessage({
-                id: Date.now().toString(),
-                role: 'bot',
-                content: `File created successfully at ${path}`,
-                timestamp: new Date().toISOString()
-              });
-            } else {
-              addMessage({
-                id: Date.now().toString(),
-                role: 'bot',
-                content: `Error: ${result.error || 'Failed to create file'}`,
-                timestamp: new Date().toISOString()
-              });
-            }
-            setActiveTask({ status: 'idle' });
-            return;
-          } catch (err) {
-            console.error(err);
-            setActiveTask({ status: 'error' });
-            return;
-          }
-        }
-      }
-      
-      // 2. Quick Terminal: "run command: {command}"
-      if (taskLower.startsWith("run command:")) {
-        const cmd = userInput.split(/run command:/i)[1].trim();
-        setActiveTask({ status: 'running' });
-        try {
-          const res = await fetch('/api/task/quick', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: "terminal", command: cmd })
-          });
-          const result = await res.json();
-          addMessage({
-            id: Date.now().toString(),
-            role: 'bot',
-            content: `Quick Action: Terminal command executed.\n\nOutput:\n${result.stdout || result.stderr || 'No output'}`,
-            timestamp: new Date().toISOString()
-          });
-          setActiveTask({ status: 'idle' });
-          return;
-        } catch (err) {
-          console.error(err);
-          setActiveTask({ status: 'error' });
-          return;
-        }
+      // 0. Help Command
+      if (taskLower === "help") {
+        addMessage({
+          id: Date.now().toString(),
+          role: 'system',
+          content: `Available Quick Commands:
+• help - Show this message
+• create a file at {path} with content: {content}
+• read file at {path}
+• run command: {command}
+• delete file at {path}
+• list files in {path}
+• create folder at {path}
+• run python {path}
+• copy file from {src} to {dst}
+• show desktop - List files on your desktop`,
+          timestamp: new Date().toISOString()
+        });
+        return true;
       }
 
-      // 3. Quick File Read: "read file at {path}"
-      if (taskLower.startsWith("read file at")) {
-        const pathPart = userInput.split(/read file at/i)[1].trim();
+      // Helper to execute quick task
+      const executeQuick = async (payload: any, successMsg?: string) => {
         setActiveTask({ status: 'running' });
         try {
           const res = await fetch('/api/task/quick', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: "file_read", path: pathPart })
+            body: JSON.stringify(payload)
           });
           const result = await res.json();
+          
+          let content = '';
+          if (payload.action === 'file_write') {
+            content = result.success ? (successMsg || `File created at ${payload.path}`) : `Error: ${result.error}`;
+          } else if (payload.action === 'file_read') {
+            content = result.error ? `Error: ${result.error}` : `File Content:\n\n${result.content}`;
+          } else if (payload.action === 'terminal') {
+            content = result.error ? `Error: ${result.error}` : `Output:\n${result.stdout || result.stderr || 'Success (no output)'}`;
+          }
+
           addMessage({
             id: Date.now().toString(),
             role: 'bot',
-            content: `Quick Action: File read completed.\n\nContent:\n${result.content || result.error || 'No content'}`,
+            content: `Quick Action: ${content}`,
             timestamp: new Date().toISOString()
           });
           setActiveTask({ status: 'idle' });
-          return;
         } catch (err) {
           console.error(err);
           setActiveTask({ status: 'error' });
-          return;
         }
+      };
+
+      // 1. Create File
+      const fileWriteMatch = message.match(/create a file at\s+(\S+)\s+with content:\s*(.+)/i);
+      if (fileWriteMatch) {
+        await executeQuick({ action: 'file_write', path: fileWriteMatch[1], content: fileWriteMatch[2] });
+        return true;
       }
+
+      // 2. Read File
+      const fileReadMatch = message.match(/read file at\s+(\S+)/i);
+      if (fileReadMatch) {
+        await executeQuick({ action: 'file_read', path: fileReadMatch[1] });
+        return true;
+      }
+
+      // 3. Run Command
+      if (taskLower.startsWith("run command:")) {
+        const cmd = message.split(/run command:/i)[1].trim();
+        await executeQuick({ action: 'terminal', command: cmd });
+        return true;
+      }
+
+      // 4. Delete File
+      const deleteMatch = message.match(/delete file at\s+(\S+)/i);
+      if (deleteMatch) {
+        await executeQuick({ action: 'terminal', command: `rm ${deleteMatch[1]}` }, `File deleted: ${deleteMatch[1]}`);
+        return true;
+      }
+
+      // 5. List Files
+      const listMatch = message.match(/list files in\s+(\S+)/i);
+      if (listMatch) {
+        await executeQuick({ action: 'terminal', command: `ls -la ${listMatch[1]}` });
+        return true;
+      }
+
+      // 6. Create Folder
+      const folderMatch = message.match(/create folder at\s+(\S+)/i);
+      if (folderMatch) {
+        await executeQuick({ action: 'terminal', command: `mkdir -p ${folderMatch[1]}` }, `Folder created: ${folderMatch[1]}`);
+        return true;
+      }
+
+      // 7. Run Python
+      const pythonMatch = message.match(/run python\s+(\S+)/i);
+      if (pythonMatch) {
+        await executeQuick({ action: 'terminal', command: `python3 ${pythonMatch[1]}` });
+        return true;
+      }
+
+      // 8. Copy File
+      const copyMatch = message.match(/copy file from\s+(\S+)\s+to\s+(\S+)/i);
+      if (copyMatch) {
+        await executeQuick({ action: 'terminal', command: `cp ${copyMatch[1]} ${copyMatch[2]}` }, `Copied ${copyMatch[1]} to ${copyMatch[2]}`);
+        return true;
+      }
+
+      // 9. Show Desktop
+      if (taskLower === "show desktop") {
+        await executeQuick({ action: 'terminal', command: `ls -la /Users/miruzaankhan/Desktop` });
+        return true;
+      }
+
+      return false;
+    };
+
+    if (taskMode === 'idle') {
+      if (await handleQuickAction(userInput)) return;
 
       setActiveTask({ status: 'running' });
       setOriginalTask(userInput);
