@@ -32,23 +32,18 @@ class LLMRouter:
         
         self.httpx_client = httpx.AsyncClient(timeout=90.0)
         
-        import os
-        self.providers = []
-        if os.getenv("OPENROUTER_API_KEY"):
-            self.providers.append("openrouter")
-        if os.getenv("NVIDIA_API_KEY"):
-            self.providers.append("nvidia")  
-        if os.getenv("GROQ_API_KEY"):
-            self.providers.append("groq")
-        self.providers.append("ollama")  # always available as fallback
-
         self.models = {
             "openrouter": "meta-llama/llama-3.1-8b-instruct:free",
             "nvidia": "meta/llama-3.1-8b-instruct",
             "groq": "llama-3.1-8b-instant",
             "ollama": "llama3"
         }
-        self.current_provider_index = 0
+
+        self.vision_models = {
+            "nvidia": "nvidia/llama-3.2-90b-vision-instruct",
+            "groq": "llama-3.2-90b-vision-preview",
+            "openrouter": "meta-llama/llama-3.2-90b-vision-instruct"
+        }
         
     def update_keys(self, openrouter: str = None, nvidia: str = None, groq: str = None):
         if openrouter:
@@ -67,100 +62,85 @@ class LLMRouter:
                 api_key=groq,
             )
 
+    async def _attempt_completion(self, provider_name: str, messages: list[dict], model: str, max_tokens: int) -> dict[str, Any]:
+        try:
+            logger.info(f"Attempting completion with {provider_name} using model {model}")
+            
+            if provider_name in self.clients:
+                client = self.clients[provider_name]
+                response = await client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=0.7,
+                )
+                result_text = response.choices[0].message.content
+                tokens_used = response.usage.total_tokens if response.usage else 0
+                
+            elif provider_name == "ollama":
+                url = f"{settings.ollama_base_url}/api/chat"
+                payload = {
+                    "model": model,
+                    "messages": messages,
+                    "stream": False,
+                    "options": {"num_predict": max_tokens}
+                }
+                resp = await self.httpx_client.post(url, json=payload)
+                resp.raise_for_status()
+                data = resp.json()
+                result_text = data.get("message", {}).get("content", "")
+                tokens_used = data.get("prompt_eval_count", 0) + data.get("eval_count", 0)
+            else:
+                raise ValueError(f"Unknown provider: {provider_name}")
+            
+            database.increment_request_count(provider_name)
+            return {
+                "response": result_text,
+                "provider_used": provider_name,
+                "tokens_used": tokens_used
+            }
+        except Exception as e:
+            logger.error(f"Error with {provider_name}: {e}")
+            raise e
+
     async def complete(self, messages: list[dict], task_id: str, max_tokens: int = 1000, max_retries: int = 3) -> dict[str, Any]:
-        """
-        Attempts to call LLM providers in priority order.
-        If a 429 or timeout occurs, saves a checkpoint and moves to the next provider.
-        """
-        # Load checkpoint if resuming (optional logic, but implemented as requested)
-        checkpoint = database.load_checkpoint(task_id)
-        current_step = checkpoint["current_step"] if checkpoint else 0
-        
         active_providers = database.get_active_providers()
-        
-        # Filter strictly active
         available_names = [p["provider_name"] for p in active_providers if p["status"] == "active"]
         
         if not available_names:
-            raise RuntimeError("No active providers available (all rate limited or offline).")
+            raise RuntimeError("No active providers available.")
 
         for attempt in range(max_retries):
             for provider_name in available_names:
                 try:
-                    logger.info(f"Attempting completion with {provider_name}")
-                    
-                    if provider_name in self.clients:
-                        # OpenAI compatible (OpenRouter, Nvidia, Groq)
-                        client = self.clients[provider_name]
-                        response = await client.chat.completions.create(
-                            model=self.models[provider_name],
-                            messages=messages,
-                            max_tokens=max_tokens,
-                            temperature=0.7,
-                        )
-                        result_text = response.choices[0].message.content
-                        tokens_used = response.usage.total_tokens if response.usage else 0
-                        
-                    elif provider_name == "ollama":
-                        # Raw httpx for Ollama
-                        url = f"{settings.ollama_base_url}/api/chat"
-                        payload = {
-                            "model": self.models["ollama"],
-                            "messages": messages,
-                            "stream": False,
-                            "options": {"num_predict": max_tokens}
-                        }
-                        resp = await self.httpx_client.post(url, json=payload)
-                        resp.raise_for_status()
-                        data = resp.json()
-                        result_text = data.get("message", {}).get("content", "")
-                        tokens_used = data.get("prompt_eval_count", 0) + data.get("eval_count", 0)
-                    else:
-                        continue # Unknown provider
-                    
-                    # Success!
-                    database.increment_request_count(provider_name)
-                    
-                    return {
-                        "response": result_text,
-                        "provider_used": provider_name,
-                        "tokens_used": tokens_used
-                    }
-                    
-                except openai.RateLimitError:
-                    logger.warning(f"Rate limit hit for {provider_name}")
+                    return await self._attempt_completion(provider_name, messages, self.models.get(provider_name, "llama3"), max_tokens)
+                except (openai.RateLimitError, httpx.HTTPStatusError):
                     database.mark_rate_limited(provider_name, reset_after_seconds=60)
-                    database.save_checkpoint(task_id, current_step, messages)
-                    continue # Try next provider
-                except openai.APITimeoutError:
-                    logger.warning(f"Timeout for {provider_name}")
-                    database.save_checkpoint(task_id, current_step, messages)
-                    continue # Try next provider
-                except openai.AuthenticationError:
-                    logger.error(f"Authentication error for {provider_name}. Removing from session.")
-                    if provider_name in self.providers:
-                        self.providers.remove(provider_name)
                     continue
-                except httpx.HTTPStatusError as e:
-                    if e.response.status_code == 401:
-                        logger.error(f"Authentication error for {provider_name}. Removing from session.")
-                        if provider_name in self.providers:
-                            self.providers.remove(provider_name)
-                        continue
-                    if e.response.status_code == 429:
-                        logger.warning(f"Rate limit hit for {provider_name}")
-                        database.mark_rate_limited(provider_name, reset_after_seconds=60)
-                        database.save_checkpoint(task_id, current_step, messages)
-                        continue
-                    logger.error(f"HTTP error for {provider_name}: {e}")
-                    database.save_checkpoint(task_id, current_step, messages)
+                except Exception:
                     continue
-                except Exception as e:
-                    logger.error(f"Unexpected error with {provider_name}: {e}")
-                    database.save_checkpoint(task_id, current_step, messages)
+        raise RuntimeError(f"All providers exhausted.")
+
+    async def complete_with_vision(self, messages: list[dict], task_id: str, max_tokens: int = 1000, max_retries: int = 3) -> dict[str, Any]:
+        """Specialized completion for multimodal/vision requests."""
+        active_providers = database.get_active_providers()
+        # Prioritize providers that have vision models defined
+        available_names = [p["provider_name"] for p in active_providers if p["status"] == "active" and p["provider_name"] in self.vision_models]
+        
+        if not available_names:
+            logger.warning("No vision-capable providers active. Falling back to standard complete (might fail).")
+            return await self.complete(messages, task_id, max_tokens, max_retries)
+
+        for attempt in range(max_retries):
+            for provider_name in available_names:
+                try:
+                    return await self._attempt_completion(provider_name, messages, self.vision_models[provider_name], max_tokens)
+                except (openai.RateLimitError, httpx.HTTPStatusError):
+                    database.mark_rate_limited(provider_name, reset_after_seconds=60)
                     continue
-                    
-        raise RuntimeError(f"All providers exhausted or failed after {max_retries} retries.")
+                except Exception:
+                    continue
+        raise RuntimeError(f"All vision providers exhausted.")
 
     async def close(self):
         await self.httpx_client.aclose()

@@ -18,6 +18,19 @@ async def complete(messages: list[dict], task_id: str, max_tokens: int = 1500) -
         data = resp.json()
         return data["response"]
 
+async def complete_vision(messages: list[dict], task_id: str, max_tokens: int = 1500) -> str:
+    """Send a vision completion request to the LLM Manager."""
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        payload = {
+            "messages": messages,
+            "task_id": task_id,
+            "max_tokens": max_tokens
+        }
+        resp = await client.post(f"{settings.llm_url}/complete_vision", json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+        return data["response"]
+
 async def ask_clarifying_questions(task_description: str, task_id: str) -> list[str]:
     """Ask LLM to generate clarifying questions."""
     prompt = f"""You are Cammina AI Orchestrator. 
@@ -123,41 +136,36 @@ Return a SINGLE JSON object representing the new action.
 
 async def extract_commands_from_screenshot(image_b64: str, task_id: str) -> dict:
     """Uses a vision-capable LLM to extract terminal commands from a Cursor screenshot."""
-    prompt = """
-    Look at this screenshot of the Cursor application.
-    Extract any terminal commands that Cursor is suggesting or that were just generated in the chat.
-    
-    Return a JSON object ONLY:
-    {
-      "commands": ["npm install", "node app.js"],
-      "done": true/false (is the overall task finished?),
-      "needs_more_input": true/false,
-      "response_text": "Brief summary of what Cursor said"
-    }
-    """
-    
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": prompt},
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{image_b64}"}
-                }
-            ]
-        }
-    ]
-    
-    response = await complete(messages, task_id, max_tokens=1000)
-    
-    clean_response = response.strip()
-    if clean_response.startswith("```"):
-        clean_response = re.sub(r'^```[a-zA-Z]*\n|\n```$', '', clean_response, flags=re.DOTALL)
-        
     try:
-        import json
-        return json.loads(clean_response)
+        prompt = "Look at this screenshot of Cursor IDE. Extract any terminal commands shown. Return JSON only: {\"commands\": [], \"done\": false, \"response_text\": \"\"}"
+        
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{image_b64}"}
+                    }
+                ]
+            }
+        ]
+        
+        response = await complete_vision(messages, task_id, max_tokens=1000)
+        
+        clean_response = response.strip()
+        if clean_response.startswith("```"):
+            clean_response = re.sub(r'^```[a-zA-Z]*\n|\n```$', '', clean_response, flags=re.DOTALL)
+            
+        try:
+            import json
+            return json.loads(clean_response)
+        except Exception as e:
+            logger.error(f"Failed to parse vision JSON: {response}")
+            return {"commands": [], "done": False, "needs_more_input": False, "response_text": response}
+            
     except Exception as e:
-        logger.error(f"Failed to parse vision JSON: {response}")
-        return {"commands": [], "done": False, "needs_more_input": False, "response_text": response}
+        logger.error(f"Vision call failed: {e}. Falling back to blind round.")
+        # Fallback: return empty but NOT done so the loop continues
+        return {"commands": [], "done": False, "response_text": "Vision extraction failed, proceeding to next round."}
