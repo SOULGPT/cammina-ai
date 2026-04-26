@@ -25,7 +25,7 @@ export interface Project {
 
 interface AppState {
   // Global App State
-  user: { name: string; email: string } | null;
+  user: { id: string; email: string } | null | undefined;
   projects: Project[];
   activeProvider: string;
   wsConnected: boolean;
@@ -35,7 +35,7 @@ interface AppState {
   messages: Message[];
 
   // Actions
-  setUser: (user: { name: string; email: string } | null) => void;
+  setUser: (user: { id: string; email: string } | null) => void;
   setProjects: (projects: Project[]) => void;
   setActiveProvider: (provider: string) => void;
   setWsConnected: (connected: boolean) => void;
@@ -47,7 +47,7 @@ interface AppState {
 }
 
 export const useStore = create<AppState>((set) => ({
-  user: null,
+  user: undefined, // undefined means auth state is still loading
   projects: [
     { id: '1', name: 'Build React App', status: 'active', updatedAt: new Date().toISOString() },
     { id: '2', name: 'Data Pipeline', status: 'completed', updatedAt: new Date(Date.now() - 86400000).toISOString() }

@@ -4,7 +4,8 @@ import { useTaskWebSocket } from '../hooks/useTaskWebSocket';
 import ChatComponent from '../components/Chat';
 import TaskLog from '../components/TaskLog';
 import ErrorLog from '../components/ErrorLog';
-import { Command, Folder, Settings, Plus } from 'lucide-react';
+import { Command, Folder, Settings, Plus, LogOut } from 'lucide-react';
+import { supabase } from '../lib/supabase';
 
 export default function ChatPage() {
   const activeTask = useStore((state) => state.activeTask);
@@ -44,11 +45,18 @@ export default function ChatPage() {
           </div>
         </div>
 
-        <div className="p-4 border-t border-[#2d2d2d]">
+        <div className="p-4 border-t border-[#2d2d2d] space-y-1">
           <Link to="/settings" className="flex items-center gap-3 px-2 py-2 rounded-lg text-sm text-gray-400 hover:bg-[#2d2d2d] hover:text-white transition-colors">
             <Settings className="w-4 h-4" />
             Settings
           </Link>
+          <button 
+            onClick={() => supabase.auth.signOut()}
+            className="w-full flex items-center gap-3 px-2 py-2 rounded-lg text-sm text-red-400 hover:bg-red-950/30 hover:text-red-300 transition-colors"
+          >
+            <LogOut className="w-4 h-4" />
+            Sign Out
+          </button>
         </div>
       </div>
 

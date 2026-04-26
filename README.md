@@ -1,106 +1,74 @@
-# Cammina-AI
+# Cammina AI
+### Your Autonomous AI Development Assistant
 
-> **Local-first AI orchestration platform** — a monorepo powering a React frontend and a suite of Python microservices for LLM routing, vector memory, and on-device tool execution.
+Cammina AI is a self-operating AI agent that runs on your Mac. 
+Give it one command, it asks clarifying questions, then works 
+completely autonomously until the task is done.
 
----
+## Features
+- Autonomous task execution
+- Automatic LLM provider failover (OpenRouter, Nvidia, Groq)
+- Persistent memory per project
+- Real-time progress monitoring
+- Local-first, completely free to run
+- One command to start everything
 
-## 📁 Project Structure
+## Quick Start
 
-```
-Cammina/
-├── apps/
-│   └── web/              # React 19 + TypeScript + Tailwind CSS + shadcn/ui
-├── services/
-│   ├── orchestrator/     # FastAPI gateway (port 8000)
-│   ├── llm_manager/      # LLM routing (OpenAI · Anthropic · Ollama)
-│   ├── memory/           # Vector memory service (Qdrant)
-│   └── local_agent/      # File system & shell tool executor
-├── database/
-│   ├── schema.sql        # PostgreSQL + pgvector schema
-│   └── migrations/       # Incremental SQL migrations
-├── logs/                 # Shared log output
-├── config/               # Shared configuration files
-├── .env.local            # Environment variables (git-ignored)
-├── docker-compose.yml    # Full stack orchestration
-└── pnpm-workspace.yaml   # pnpm monorepo config
-```
-
-## 🚀 Quick Start
-
-### Prerequisites
-- **Node.js** ≥ 20
-- **pnpm** ≥ 9  (`curl -fsSL https://get.pnpm.io/install.sh | sh -`)
-- **Python** ≥ 3.11
-- **Docker** + **Docker Compose** (for infrastructure)
-
-### 1. Install Node dependencies
-
+### 1. Clone the repo
 ```bash
-pnpm install
+git clone https://github.com/SOULGPT/cammina-ai.git
+cd cammina-ai
 ```
 
-### 2. Start infrastructure (Postgres, Redis, Qdrant)
-
+### 2. Install dependencies
 ```bash
-docker-compose up -d db redis qdrant
+pip3 install -r services/local_agent/requirements.txt
+pip3 install -r services/llm_manager/requirements.txt
+pip3 install -r services/memory/requirements.txt
+pip3 install -r services/orchestrator/requirements.txt
+cd apps/web && npm install && cd ../..
 ```
 
-### 3. Start the web dev server
-
+### 3. Set up environment
 ```bash
-pnpm dev
-# → http://localhost:3000
+cp .env.example .env.local
+# Edit .env.local and add your free API keys
 ```
 
-### 4. Start Python services
-
+### 4. Initialize database
 ```bash
-# Orchestrator
-cd services/orchestrator
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn main:app --reload --port 8000
-
-# Repeat for llm_manager, memory, local_agent in separate terminals
+python3 database/init_db.py
 ```
 
-### 5. Full stack with Docker
-
+### 5. Start everything
 ```bash
-docker-compose --profile full up --build
+./cammina start
 ```
 
----
+### 6. Open browser
+http://localhost:3000
 
-## 🛠 Tech Stack
+## Free API Keys
+- OpenRouter: https://openrouter.ai/keys
+- Nvidia NIM: https://build.nvidia.com
+- Groq: https://console.groq.com
 
-| Layer | Technology |
-|---|---|
-| Frontend | React 19, TypeScript, Vite, Tailwind CSS, shadcn/ui |
-| Gateway | FastAPI, Uvicorn, httpx |
-| LLM Routing | OpenAI SDK, Anthropic SDK, Ollama |
-| Memory | Qdrant (pgvector fallback) |
-| Database | PostgreSQL 16 + pgvector |
-| Cache | Redis 7 |
-| Monorepo | pnpm workspaces |
-| Containers | Docker Compose |
+## Architecture
+- **Web UI**: React + TypeScript (port 3000)
+- **Orchestrator**: FastAPI brain (port 8000)
+- **LLM Manager**: Provider routing (port 8001)
+- **Memory**: ChromaDB + SQLite (port 8002)
+- **Local Agent**: Mac executor (port 8765)
 
----
+## CLI Commands
+```bash
+./cammina start    # Start all services
+./cammina stop     # Stop all services
+./cammina status   # Check service status
+./cammina restart  # Restart everything
+./cammina logs     # View logs
+```
 
-## 🔑 Environment Variables
-
-Copy `.env.local` and fill in your secrets. Key variables:
-
-| Variable | Description |
-|---|---|
-| `OPENAI_API_KEY` | OpenAI API key |
-| `ANTHROPIC_API_KEY` | Anthropic API key |
-| `OLLAMA_BASE_URL` | Ollama server URL (default local) |
-| `DATABASE_URL` | PostgreSQL connection string |
-| `SECRET_KEY` | JWT signing secret |
-
----
-
-## 📜 License
-
-MIT © Cammina-AI Contributors
+## License
+MIT License - Free to use and modify
