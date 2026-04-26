@@ -1,60 +1,125 @@
-"""
-Cammina-AI Orchestrator
-FastAPI gateway that routes requests to specialised services.
-"""
-
-from __future__ import annotations
-
+import uuid
 import logging
-from contextlib import asynccontextmanager
-from typing import AsyncGenerator
-
-import httpx
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
-from .config import Settings
-from .routers import agents, health
+import planner
+import task_manager
+from config import settings
 
-settings = Settings()
-
-logging.basicConfig(
-    level=settings.log_level,
-    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-)
+logging.basicConfig(level=settings.log_level)
 logger = logging.getLogger(__name__)
 
-
-@asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    logger.info("🚀 Orchestrator starting up …")
-    app.state.http_client = httpx.AsyncClient(timeout=30.0)
-    yield
-    logger.info("🛑 Orchestrator shutting down …")
-    await app.state.http_client.aclose()
-
-
 app = FastAPI(
-    title="Cammina-AI Orchestrator",
-    description="Central gateway for the Cammina-AI agent platform.",
-    version="0.1.0",
-    lifespan=lifespan,
+    title="Cammina Orchestrator",
+    description="The brain coordinating Cammina AI."
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-app.include_router(health.router, prefix="/health", tags=["health"])
-app.include_router(agents.router, prefix="/agents", tags=["agents"])
+# --- Models ---
 
+class TaskStartRequest(BaseModel):
+    task: str
+    project_id: str
+    project_name: str
 
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    logger.error("Unhandled error: %s", exc, exc_info=True)
-    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+class TaskAnswerRequest(BaseModel):
+    task_id: str
+    task: str
+    answers: dict
+
+class TaskActionRequest(BaseModel):
+    task_id: str
+
+# --- Endpoints ---
+
+@app.get("/health", tags=["system"])
+async def health():
+    return {"status": "healthy", "service": "cammina-orchestrator"}
+
+@app.post("/task/start", tags=["task"])
+async def task_start(req: TaskStartRequest):
+    task_id = str(uuid.uuid4())
+    state = task_manager.get_state(task_id)
+    state["project_id"] = req.project_id
+    
+    questions = await planner.ask_clarifying_questions(req.task, task_id)
+    
+    return {
+        "task_id": task_id,
+        "questions": questions
+    }
+
+@app.post("/task/answer", tags=["task"])
+async def task_answer(req: TaskAnswerRequest):
+    plan = await planner.create_plan(req.task, req.answers, req.task_id)
+    
+    state = task_manager.get_state(req.task_id)
+    state["plan"] = plan
+    state["total_steps"] = len(plan)
+    
+    return {
+        "task_id": req.task_id,
+        "plan": plan,
+        "estimated_steps": len(plan)
+    }
+
+@app.post("/task/execute", tags=["task"])
+async def task_execute(req: TaskActionRequest, background_tasks: BackgroundTasks):
+    state = task_manager.get_state(req.task_id)
+    if not state["plan"]:
+        raise HTTPException(status_code=400, detail="No plan found. Call /task/answer first.")
+        
+    started = task_manager.start_execution(req.task_id)
+    if not started:
+        raise HTTPException(status_code=400, detail="Task is already running.")
+        
+    return {"task_id": req.task_id, "status": "running"}
+
+@app.post("/task/pause", tags=["task"])
+async def task_pause(req: TaskActionRequest):
+    paused = task_manager.pause_execution(req.task_id)
+    return {"success": paused}
+
+@app.post("/task/resume", tags=["task"])
+async def task_resume(req: TaskActionRequest):
+    started = task_manager.start_execution(req.task_id)
+    return {"success": started}
+
+@app.get("/task/status/{task_id}", tags=["task"])
+async def task_status(task_id: str):
+    state = task_manager.get_state(task_id)
+    return {
+        "status": state["status"],
+        "current_step": state["current_step"],
+        "total_steps": state["total_steps"],
+        "errors_count": state["errors_count"]
+    }
+
+@app.websocket("/task/stream/{task_id}")
+async def task_stream(websocket: WebSocket, task_id: str):
+    await websocket.accept()
+    if task_id not in task_manager.active_websockets:
+        task_manager.active_websockets[task_id] = []
+    task_manager.active_websockets[task_id].append(websocket)
+    
+    try:
+        # Keep connection open
+        while True:
+            data = await websocket.receive_text()
+            # Handle any incoming commands from client if needed later
+    except WebSocketDisconnect:
+        if websocket in task_manager.active_websockets.get(task_id, []):
+            task_manager.active_websockets[task_id].remove(websocket)
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host=settings.orchestrator_host, port=settings.orchestrator_port, reload=True)
