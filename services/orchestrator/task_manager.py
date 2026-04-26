@@ -246,6 +246,105 @@ async def execute_task_loop(task_id: str):
         if task_id in active_tasks:
             del active_tasks[task_id]
 
+async def execute_autonomous_cursor(task_id: str, instruction: str, project_path: str, max_rounds: int = 10):
+    """The autonomous loop for interacting with Cursor."""
+    state = get_state(task_id)
+    state["status"] = "running"
+    state["task_description"] = instruction
+    
+    rounds_executed = 0
+    commands_executed_total = []
+    
+    try:
+        # Step 1: Focus Cursor and send initial instruction
+        await broadcast_event(task_id, "cursor_autonomous", {"message": f"Starting autonomous loop. Instruction: {instruction}"})
+        await broadcast_event(task_id, "cursor_autonomous", {"message": "Round 1: Focusing Cursor and sending instruction..."})
+        
+        # We use agent.py wrappers which call the local agent
+        # Need to ensure agent has cursor_type and screenshot methods
+        # For now, let's call the local agent directly via httpx in this loop for simplicity
+        
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            headers = {"Authorization": f"Bearer {settings.local_agent_secret}"}
+            
+            # Initial focus and type
+            await client.post(f"{settings.agent_url}/cursor/type", json={"text": instruction}, headers=headers)
+            
+            while rounds_executed < max_rounds:
+                rounds_executed += 1
+                
+                # Wait for Cursor to respond
+                await broadcast_event(task_id, "cursor_autonomous", {"message": f"Round {rounds_executed}: Waiting 8s for Cursor to respond..."})
+                await asyncio.sleep(8)
+                
+                # Take screenshot
+                await broadcast_event(task_id, "cursor_autonomous", {"message": f"Round {rounds_executed}: Taking screenshot..."})
+                resp = await client.post(f"{settings.agent_url}/browser/screenshot", headers=headers)
+                screenshot_data = resp.json()
+                image_b64 = screenshot_data.get("image_base64")
+                
+                if not image_b64:
+                    await broadcast_event(task_id, "cursor_autonomous", {"message": "Error: Failed to capture screenshot."})
+                    break
+                
+                # Extract commands via LLM
+                await broadcast_event(task_id, "cursor_autonomous", {"message": f"Round {rounds_executed}: Analyzing screenshot..."})
+                vision_result = await planner.extract_commands_from_screenshot(image_b64, task_id)
+                
+                commands = vision_result.get("commands", [])
+                is_done = vision_result.get("done", False)
+                response_text = vision_result.get("response_text", "")
+                
+                await broadcast_event(task_id, "cursor_autonomous", {
+                    "message": f"Round {rounds_executed}: Cursor response: {response_text}",
+                    "commands": commands
+                })
+                
+                if not commands and is_done:
+                    await broadcast_event(task_id, "cursor_autonomous", {"message": "Task marked as complete by vision model."})
+                    break
+                
+                # Execute commands
+                for cmd in commands:
+                    await broadcast_event(task_id, "cursor_autonomous", {"message": f"Executing: {cmd}"})
+                    cmd_res = await agent.run_terminal(cmd, cwd=project_path)
+                    commands_executed_total.append(cmd)
+                    
+                    # If error, send back to Cursor
+                    if cmd_res.get("exit_code") != 0 or cmd_res.get("error"):
+                        error_msg = cmd_res.get("stderr") or cmd_res.get("error")
+                        await broadcast_event(task_id, "cursor_autonomous", {"message": f"Command failed, sending error back to Cursor: {error_msg}"})
+                        await client.post(f"{settings.agent_url}/cursor/type", json={"text": f"Command failed with error: {error_msg}"}, headers=headers)
+                        # Wait a bit after sending error
+                        await asyncio.sleep(5)
+                
+                if is_done:
+                    break
+                    
+                # If not done, maybe send a "Continue" or just wait
+                if rounds_executed < max_rounds:
+                    await broadcast_event(task_id, "cursor_autonomous", {"message": f"Round {rounds_executed} complete. Proceeding to next round..."})
+
+        state["status"] = "completed"
+        await broadcast_event(task_id, "completed", {
+            "message": "Autonomous Cursor loop finished.",
+            "rounds": rounds_executed,
+            "commands": commands_executed_total
+        })
+        
+        return {
+            "success": True,
+            "rounds": rounds_executed,
+            "commands_executed": commands_executed_total,
+            "final_status": "completed"
+        }
+
+    except Exception as e:
+        logger.error(f"Error in autonomous loop: {e}")
+        state["status"] = "error"
+        await broadcast_event(task_id, "fatal_error", {"error": str(e)})
+        return {"success": False, "error": str(e)}
+
 def start_execution(task_id: str):
     """Start or resume the execution loop."""
     if task_id in active_tasks:

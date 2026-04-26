@@ -58,12 +58,6 @@ OUTPUT FORMAT - return a JSON array ONLY, no explanation:
     "action_type": "file_write",
     "file_path": "/absolute/path/to/file.py",
     "content": "file content here"
-  },
-  {
-    "step": 2,
-    "description": "Verify file exists",
-    "action_type": "file_read",
-    "file_path": "/absolute/path/to/file.py"
   }
 ]
 
@@ -71,39 +65,12 @@ STRICT RULES:
 1. NEVER use action_type other than the 5 listed above
 2. For file_write: always include file_path and content
 3. For terminal: always include command and cwd
-4. For file_read/file_list: always include file_path
-5. NEVER add steps like "open terminal", "open editor", "save file", "close file"
-6. NEVER use terminal to create files - use file_write instead
-7. NEVER run: apt-get, brew install, nano, vim, open, touch, cat > file
-8. NEVER delete files unless task explicitly says "delete" or "remove"
-9. Keep steps minimal - file creation = 1 step (file_write), not 5 steps
-10. Always use absolute paths starting with /Users/miruzaankhan
-
-EXAMPLES:
-
-Task: "create a python file that prints hello"
-CORRECT:
-[{"step":1,"description":"Create python file","action_type":"file_write","file_path":"/Users/miruzaankhan/Desktop/hello.py","content":"print('hello')"}]
-
-Task: "create a react app called myapp"
-CORRECT:
-[
-  {"step":1,"description":"Create project with npx","action_type":"terminal","command":"npx create-react-app myapp","cwd":"/Users/miruzaankhan/Desktop"},
-  {"step":2,"description":"List created files","action_type":"file_list","file_path":"/Users/miruzaankhan/Desktop/myapp"}
-]
-
-Task: "push my repo to github"
-CORRECT:
-[
-  {"step":1,"description":"Add all files","action_type":"terminal","command":"git add .","cwd":"/Users/miruzaankhan/Desktop/cammina"},
-  {"step":2,"description":"Commit changes","action_type":"terminal","command":"git commit -m 'update'","cwd":"/Users/miruzaankhan/Desktop/cammina"},
-  {"step":3,"description":"Push to origin","action_type":"terminal","command":"git push origin main","cwd":"/Users/miruzaankhan/Desktop/cammina"}
-]
+4. Always use absolute paths starting with /Users/miruzaankhan
 """
 
 async def create_plan(task_description: str, answers: dict, task_id: str) -> list[dict]:
     """Ask LLM to create a step-by-step execution plan."""
-    answers_str = "\\n".join([f"Q: {k}\\nA: {v}" for k, v in answers.items()])
+    answers_str = "\n".join([f"Q: {k}\nA: {v}" for k, v in answers.items()])
     prompt = f"""{PLANNER_SYSTEM_PROMPT}
 
 Task: "{task_description}"
@@ -113,10 +80,9 @@ User Answers:
     messages = [{"role": "user", "content": prompt}]
     response = await complete(messages, task_id)
     
-    # Strip markdown backticks if present
     clean_response = response.strip()
     if clean_response.startswith("```"):
-        clean_response = re.sub(r'^```[a-zA-Z]*\\n|\\n```$', '', clean_response, flags=re.DOTALL)
+        clean_response = re.sub(r'^```[a-zA-Z]*\n|\n```$', '', clean_response, flags=re.DOTALL)
     
     try:
         import json
@@ -125,8 +91,6 @@ User Answers:
             return plan
     except Exception as e:
         logger.error(f"Failed to parse plan JSON: {response}")
-    
-    # Fallback plan
     return [{"step": 1, "description": "Manual task analysis", "action_type": "terminal", "command": "ls -la", "cwd": "/Users/miruzaankhan"}]
 
 async def get_alternative_approach(step: dict, error: str, history: list, task_id: str) -> dict:
@@ -148,7 +112,7 @@ Return a SINGLE JSON object representing the new action.
     
     clean_response = response.strip()
     if clean_response.startswith("```"):
-        clean_response = re.sub(r'^```[a-zA-Z]*\\n|\\n```$', '', clean_response, flags=re.DOTALL)
+        clean_response = re.sub(r'^```[a-zA-Z]*\n|\n```$', '', clean_response, flags=re.DOTALL)
         
     try:
         import json
@@ -156,3 +120,44 @@ Return a SINGLE JSON object representing the new action.
     except Exception as e:
         logger.error(f"Failed to parse alternative approach JSON: {response}")
         return {}
+
+async def extract_commands_from_screenshot(image_b64: str, task_id: str) -> dict:
+    """Uses a vision-capable LLM to extract terminal commands from a Cursor screenshot."""
+    prompt = """
+    Look at this screenshot of the Cursor application.
+    Extract any terminal commands that Cursor is suggesting or that were just generated in the chat.
+    
+    Return a JSON object ONLY:
+    {
+      "commands": ["npm install", "node app.js"],
+      "done": true/false (is the overall task finished?),
+      "needs_more_input": true/false,
+      "response_text": "Brief summary of what Cursor said"
+    }
+    """
+    
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{image_b64}"}
+                }
+            ]
+        }
+    ]
+    
+    response = await complete(messages, task_id, max_tokens=1000)
+    
+    clean_response = response.strip()
+    if clean_response.startswith("```"):
+        clean_response = re.sub(r'^```[a-zA-Z]*\n|\n```$', '', clean_response, flags=re.DOTALL)
+        
+    try:
+        import json
+        return json.loads(clean_response)
+    except Exception as e:
+        logger.error(f"Failed to parse vision JSON: {response}")
+        return {"commands": [], "done": False, "needs_more_input": False, "response_text": response}

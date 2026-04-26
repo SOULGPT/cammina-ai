@@ -130,3 +130,13 @@ def focus_app(app_name: str) -> dict:
         return {"success": False, "error": result.stderr}
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+def take_screenshot_base64() -> str:
+    """Take screenshot and return base64 string"""
+    import tempfile, base64, os
+    tmp = tempfile.mktemp(suffix='.png')
+    subprocess.run(['screencapture', '-x', tmp], timeout=10)
+    with open(tmp, 'rb') as f:
+        data = base64.b64encode(f.read()).decode()
+    os.unlink(tmp)
+    return data

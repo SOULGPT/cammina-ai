@@ -60,7 +60,8 @@ export default function ChatComponent() {
 • screenshot - Takes a full-screen screenshot
 • type in cursor: {text} - Types text into Cursor chat
 • type in antigravity: {text} - Types text into Antigravity chat
-• focus {app} - Brings an application to the foreground`,
+• focus {app} - Brings an application to the foreground
+• cursor do: {instruction} - Starts an autonomous multi-round task with Cursor`,
           timestamp: new Date().toISOString()
         });
         return true;
@@ -70,7 +71,13 @@ export default function ChatComponent() {
       const executeQuick = async (payload: any, successMsg?: string) => {
         setActiveTask({ status: 'running' });
         try {
-          const res = await fetch('/api/task/quick', {
+          let url = '/api/task/quick';
+          if (payload.action === 'cursor_do') {
+            url = '/api/cursor/autonomous';
+            payload = { instruction: payload.instruction, project_path: '/Users/miruzaankhan/Desktop' };
+          }
+
+          const res = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -92,6 +99,8 @@ export default function ChatComponent() {
             content = result.success ? `Typed text into focused window.` : `Error: ${result.error}`;
           } else if (payload.action === 'cursor_focus') {
             content = result.success ? `Focused application: ${payload.app}` : `Error: ${result.error}`;
+          } else if (url.includes('autonomous')) {
+            content = result.success ? `Autonomous task finished. Rounds: ${result.rounds}. Commands run: ${result.commands_executed.join(', ')}` : `Error: ${result.error}`;
           }
 
           addMessage({
@@ -199,6 +208,13 @@ export default function ChatComponent() {
       const focusMatch = message.match(/focus\s+(.+)/i);
       if (focusMatch && !taskLower.includes("cursor") && !taskLower.includes("antigravity")) {
         await executeQuick({ action: 'cursor_focus', app: focusMatch[1] });
+        return true;
+      }
+
+      // 15. Cursor Do (Autonomous)
+      if (taskLower.startsWith("cursor do:")) {
+        const instruction = message.split(/cursor do:/i)[1].trim();
+        await executeQuick({ action: 'cursor_do', instruction });
         return true;
       }
 

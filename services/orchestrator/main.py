@@ -128,6 +128,19 @@ async def task_stream(websocket: WebSocket, task_id: str):
             task_manager.active_websockets[task_id].remove(websocket)
 
 
+@app.post("/cursor/autonomous", tags=["cursor"])
+async def cursor_autonomous(request: dict):
+    """
+    Run an autonomous loop with Cursor.
+    """
+    instruction = request.get("instruction")
+    project_path = request.get("project_path", "/Users/miruzaankhan/Desktop")
+    max_rounds = request.get("max_rounds", 10)
+    
+    task_id = str(uuid.uuid4())
+    result = await task_manager.execute_autonomous_cursor(task_id, instruction, project_path, max_rounds)
+    return result
+
 @app.post("/task/quick")
 async def task_quick(request: dict):
     import httpx, os
