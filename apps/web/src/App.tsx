@@ -7,7 +7,7 @@ import Signup from './pages/signup';
 import Chat from './pages/chat';
 import Projects from './pages/projects';
 import Settings from './pages/settings';
-import ProjectDetails from './pages/project/[id]';
+import ProjectDetails from './pages/ProjectDetails';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const user = useStore((state) => state.user);
@@ -54,7 +54,7 @@ export default function App() {
         <Route path="/projects" element={
           <ProtectedRoute><Projects /></ProtectedRoute>
         } />
-        <Route path="/project/:id" element={
+        <Route path="/project/:projectName" element={
           <ProtectedRoute><ProjectDetails /></ProtectedRoute>
         } />
         <Route path="/settings" element={

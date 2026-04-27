@@ -325,6 +325,108 @@ async def create_project(request: dict):
     
     return {"success": True, "name": name}
 
+@app.get("/projects/{project_name}")
+async def get_project_details(project_name: str):
+    import os, json, time
+    project_path = f"../../logs/projects/{project_name}"
+    if not os.path.exists(project_path):
+        return {"error": "Project not found"}
+    
+    memories = []
+    actions_file = os.path.join(project_path, "memory", "actions.json")
+    if os.path.exists(actions_file):
+        try:
+            with open(actions_file) as f: memories = json.load(f)
+        except: pass
+    
+    files = []
+    search_paths = [
+        os.path.expanduser(f"~/Desktop/{project_name}"),
+        os.path.expanduser(f"~/Documents/{project_name}")
+    ]
+    for path in search_paths:
+        if os.path.exists(path):
+            for root, dirs, filenames in os.walk(path):
+                for f in filenames:
+                    if f.startswith('.'): continue
+                    full_path = os.path.join(root, f)
+                    stats = os.stat(full_path)
+                    files.append({
+                        "name": f,
+                        "path": full_path,
+                        "size": stats.st_size,
+                        "modified": time.ctime(stats.st_mtime)
+                    })
+    
+    tasks = [m for m in memories if m.get("memory_type") == "task_summary"]
+    
+    return {
+        "name": project_name,
+        "created_at": time.ctime(os.path.getctime(project_path)),
+        "memory_count": len(memories),
+        "memories": memories[::-1],
+        "files": files,
+        "tasks": tasks[::-1]
+    }
+
+@app.get("/projects/{project_name}/memories")
+async def get_project_memories(project_name: str):
+    import os, json
+    file_path = f"../../logs/projects/{project_name}/memory/actions.json"
+    if not os.path.exists(file_path): return {"memories": []}
+    try:
+        with open(file_path) as f:
+            actions = json.load(f)
+            return {"memories": actions[::-1]}
+    except: return {"error": "Failed to read memories"}
+
+@app.post("/projects/{project_name}/memories")
+async def add_project_memory(project_name: str, request: dict):
+    import os, json, datetime, uuid
+    file_path = f"../../logs/projects/{project_name}/memory/actions.json"
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+    
+    actions = []
+    if os.path.exists(file_path):
+        try:
+            with open(file_path) as f: actions = json.load(f)
+        except: pass
+    
+    new_memory = {
+        "id": str(uuid.uuid4()),
+        "content": request.get("content"),
+        "memory_type": request.get("memory_type", "user_note"),
+        "timestamp": datetime.datetime.now().isoformat()
+    }
+    actions.append(new_memory)
+    
+    with open(file_path, 'w') as f: json.dump(actions, f, indent=2)
+    return {"success": True, "memories": actions[::-1]}
+
+@app.delete("/projects/{project_name}/memories/{index}")
+async def delete_project_memory(project_name: str, index: int):
+    import os, json
+    file_path = f"../../logs/projects/{project_name}/memory/actions.json"
+    if not os.path.exists(file_path): return {"error": "No memory file"}
+    
+    try:
+        with open(file_path) as f: actions = json.load(f)
+        if 0 <= index < len(actions):
+            actions.pop(index)
+            with open(file_path, 'w') as f: json.dump(actions, f, indent=2)
+            return {"success": True, "memories": actions[::-1]}
+        return {"error": "Invalid index"}
+    except Exception as e: return {"error": str(e)}
+
+@app.delete("/projects/{project_name}")
+async def delete_project(project_name: str):
+    import shutil, os
+    project_path = f"../../logs/projects/{project_name}"
+    if os.path.exists(project_path):
+        shutil.rmtree(project_path)
+        return {"success": True}
+    return {"error": "Project not found"}
+
 @app.post("/memory/cleanup")
 async def cleanup_memory(request: dict):
     import json, os

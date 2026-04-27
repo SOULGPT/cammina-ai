@@ -5,7 +5,7 @@ import { useTaskWebSocket } from '../hooks/useTaskWebSocket';
 import ChatComponent from '../components/Chat';
 import TaskLog from '../components/TaskLog';
 import ErrorLog from '../components/ErrorLog';
-import { Command, Folder, Settings, Plus, LogOut, RotateCcw } from 'lucide-react';
+import { Command, Folder, Settings, Plus, LogOut, RotateCcw, ArrowRight } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -98,26 +98,36 @@ export default function ChatPage() {
               <p className="text-xs text-gray-600 px-3 py-4 italic">No projects found</p>
             ) : (
               projects.map((project) => (
-                <button
+                <div
                   key={project.name}
-                  onClick={() => {
-                    setSelectedProject(project.name);
-                    window.history.pushState({}, '', `/chat?project=${project.name}`);
-                  }}
-                  className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all group ${
+                  className={`w-full flex items-center gap-1 group rounded-lg transition-all ${
                     selectedProject === project.name 
                       ? 'bg-purple-600/10 text-purple-400 border border-purple-500/20' 
                       : 'text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200 border border-transparent'
                   }`}
                 >
-                  <Folder className={`w-4 h-4 ${selectedProject === project.name ? 'text-purple-400' : 'text-gray-500 group-hover:text-gray-400'}`} />
-                  <span className="truncate flex-1 text-left">{project.name}</span>
-                  {project.memory_count > 0 && (
-                    <span className="bg-purple-600/20 text-purple-400 text-[10px] px-1.5 py-0.5 rounded-full border border-purple-500/20 font-bold">
-                      {project.memory_count}
-                    </span>
-                  )}
-                </button>
+                  <button
+                    onClick={() => {
+                      setSelectedProject(project.name);
+                      window.history.pushState({}, '', `/chat?project=${project.name}`);
+                    }}
+                    className="flex-1 flex items-center gap-3 px-3 py-2 text-sm text-left truncate"
+                  >
+                    <Folder className={`w-4 h-4 shrink-0 ${selectedProject === project.name ? 'text-purple-400' : 'text-gray-500 group-hover:text-gray-400'}`} />
+                    <span className="truncate">{project.name}</span>
+                    {project.memory_count > 0 && (
+                      <span className="bg-purple-600/20 text-purple-400 text-[10px] px-1.5 py-0.5 rounded-full border border-purple-500/20 font-bold">
+                        {project.memory_count}
+                      </span>
+                    )}
+                  </button>
+                  <Link 
+                    to={`/project/${project.name}`}
+                    className="p-2 opacity-0 group-hover:opacity-100 hover:text-white transition-all"
+                  >
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </Link>
+                </div>
               ))
             )}
           </div>
