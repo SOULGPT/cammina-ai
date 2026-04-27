@@ -42,6 +42,7 @@ class MemorySaveRequest(BaseModel):
     project_name: str
     content: str
     memory_type: str # 'action', 'task_summary', etc.
+    is_explicit: bool = False
 
 class MemorySearchRequest(BaseModel):
     query: str
@@ -130,12 +131,26 @@ def save_to_file(project_name, content, memory_type):
     with open(file_path, 'w') as f:
         json.dump(actions, f, indent=2)
 
+def is_meaningful_memory(content: str) -> bool:
+    if len(content) < 30: return False
+    skip_prefixes = ["Step ", "Starting step", "Completed task:", "step_result", "Task complete", "Executing:"]
+    for p in skip_prefixes:
+        if content.startswith(p): return False
+    
+    meaningful = ["created", "built", "deployed", "installed", "fixed", "configured", "pushed", "cloned", "wrote", "/Users/", "http", "successfully", "project", "app", "file"]
+    content_lower = content.lower()
+    return any(kw in content_lower for kw in meaningful)
+
 @app.post("/memory/save", tags=["memory"])
 async def memory_save(req: MemorySaveRequest):
     """
     Saves content to vector DB and appends to local actions log.
     """
     try:
+        # Filter if not explicit
+        if not req.is_explicit and not is_meaningful_memory(req.content):
+            return {"success": True, "status": "skipped_not_meaningful"}
+
         # 1. Save to vector memory
         vector_memory.save_vector_memory(req.project_name, req.content, {"type": req.memory_type})
         

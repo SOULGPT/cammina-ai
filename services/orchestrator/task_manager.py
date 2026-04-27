@@ -146,6 +146,18 @@ async def execute_step(step: dict) -> dict:
     
     return {"error": f"Unknown action_type: {action_type}"}
 
+def is_meaningful_memory(content: str) -> bool:
+    if not content or len(content) < 40:
+        return False
+    bad_prefixes = [
+        "Step ", "Starting step", "Completed task:",
+        "Executing:", "checkpoint", "Task complete",
+        "step_result", "provider"
+    ]
+    if any(content.startswith(p) for p in bad_prefixes):
+        return False
+    return True
+
 async def execute_task_loop(task_id: str):
     """The autonomous execution loop."""
     state = get_state(task_id)
@@ -218,28 +230,29 @@ async def execute_task_loop(task_id: str):
                     success = True
                     # SAVE TO PROJECT MEMORY
                     try:
-                        async with httpx.AsyncClient() as client:
-                            await client.post(f"{settings.memory_url}/memory/save", json={
-                                "project_name": project_name,
-                                "content": f"Step {state['current_step'] + 1}: {step.get('description')} -> SUCCESS",
-                                "memory_type": "action"
-                            })
+                        mem_content = f"Step {state['current_step'] + 1}: {step.get('description')} -> SUCCESS"
+                        if is_meaningful_memory(mem_content):
+                            async with httpx.AsyncClient() as client:
+                                await client.post(f"{settings.memory_url}/memory/save", json={
+                                    "project_name": project_name,
+                                    "content": mem_content,
+                                    "memory_type": "action"
+                                })
                     except: pass
-                else:
-                    state["errors_count"] += 1
-                    retry_count += 1
             
             state["current_step"] += 1
             await _save_checkpoint(task_id)
             
         # SAVE FINAL SUMMARY
         try:
-            async with httpx.AsyncClient() as client:
-                await client.post(f"{settings.memory_url}/memory/save", json={
-                    "project_name": project_name,
-                    "content": f"Completed task: {task_desc}. Steps: {state['current_step']}. Result: success",
-                    "memory_type": "task_summary"
-                })
+            final_summary = f"Completed project: {project_name}. Task: {task_desc}. Result: success"
+            if is_meaningful_memory(final_summary):
+                async with httpx.AsyncClient() as client:
+                    await client.post(f"{settings.memory_url}/memory/save", json={
+                        "project_name": project_name,
+                        "content": final_summary,
+                        "memory_type": "task_summary"
+                    })
         except: pass
 
         state["status"] = "completed"

@@ -302,6 +302,62 @@ async def get_projects():
     
     return {"projects": projects}
 
+@app.post("/memory/cleanup")
+async def cleanup_memory(request: dict):
+    import json, os
+    project_name = request.get("project_name", "general")
+    file_path = f"../../logs/projects/{project_name}/memory/actions.json"
+    
+    if not os.path.exists(file_path):
+        return {"success": True, "deleted": 0, "message": "No memory file found"}
+    
+    try:
+        with open(file_path) as f:
+            actions = json.load(f)
+        
+        bad_prefixes = ["Step ", "Starting step", "Completed task:", "step_result", "Task complete", "Executing:", "checkpoint", "provider switched"]
+        good_actions = []
+        deleted = 0
+        for action in actions:
+            content = action.get("content", "")
+            is_bad = any(content.startswith(p) for p in bad_prefixes)
+            is_too_short = len(content) < 30
+            if is_bad or is_too_short:
+                deleted += 1
+            else:
+                good_actions.append(action)
+        
+        with open(file_path, 'w') as f:
+            json.dump(good_actions, f, indent=2)
+        
+        return {"success": True, "deleted": deleted, "remaining": len(good_actions)}
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.post("/memory/cleanup-all")
+async def cleanup_all_memory():
+    import json, os
+    projects_dir = "../../logs/projects"
+    total_deleted = 0
+    if not os.path.exists(projects_dir):
+        return {"success": True, "deleted": 0}
+    
+    bad_prefixes = ["Step ", "Starting step", "Completed task:", "step_result", "Task complete", "Executing:", "checkpoint", "provider switched"]
+    
+    for project_name in os.listdir(projects_dir):
+        file_path = f"{projects_dir}/{project_name}/memory/actions.json"
+        if not os.path.exists(file_path): continue
+        try:
+            with open(file_path) as f:
+                actions = json.load(f)
+            good = [a for a in actions if not any(a.get("content","").startswith(p) for p in bad_prefixes) and len(a.get("content","")) >= 30]
+            total_deleted += len(actions) - len(good)
+            with open(file_path, 'w') as f:
+                json.dump(good, f, indent=2)
+        except: pass
+    
+    return {"success": True, "deleted": total_deleted}
+
 @app.post("/task/quick")
 async def task_quick(request: dict):
     import httpx, os
@@ -319,7 +375,8 @@ async def task_quick(request: dict):
             await c.post(f"{settings.memory_url}/memory/save", json={
                 "project_name": project_name,
                 "content": content,
-                "memory_type": "note"
+                "memory_type": "note",
+                "is_explicit": True
             })
         return {"success": True, "message": "Memory saved"}
 
