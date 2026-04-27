@@ -137,7 +137,15 @@ Return a SINGLE JSON object representing the new action.
 async def extract_commands_from_screenshot(image_b64: str, task_id: str) -> dict:
     """Uses a vision-capable LLM to extract terminal commands from a Cursor screenshot."""
     try:
-        prompt = "Look at this screenshot of Cursor IDE. Extract any terminal commands shown. Return JSON only: {\"commands\": [], \"done\": false, \"response_text\": \"\"}"
+        prompt = """Look at this screenshot of Cursor IDE chat.
+Find any terminal/shell commands that Cursor is suggesting to run.
+These are usually in code blocks with commands like: cd, npm, pip, python, git, etc.
+
+Return ONLY valid JSON, nothing else:
+{"commands": ["cmd1", "cmd2"], "done": false, "response_text": "brief summary"}
+
+If no commands found, return: {"commands": [], "done": false, "response_text": "no commands"}
+If task looks complete, set done to true."""
         
         messages = [
             {
@@ -152,20 +160,47 @@ async def extract_commands_from_screenshot(image_b64: str, task_id: str) -> dict
             }
         ]
         
-        response = await complete_vision(messages, task_id, max_tokens=1000)
+        response_text = await complete_vision(messages, task_id, max_tokens=1000)
+        logger.info(f"Vision LLM raw response: {response_text}")
         
-        clean_response = response.strip()
-        if clean_response.startswith("```"):
-            clean_response = re.sub(r'^```[a-zA-Z]*\n|\n```$', '', clean_response, flags=re.DOTALL)
-            
+        import json
+        # Strategy 1: Direct JSON parse
         try:
-            import json
-            return json.loads(clean_response)
-        except Exception as e:
-            logger.error(f"Failed to parse vision JSON: {response}")
-            return {"commands": [], "done": False, "needs_more_input": False, "response_text": response}
+            return json.loads(response_text.strip())
+        except:
+            pass
+        
+        # Strategy 2: Extract JSON from markdown code block
+        json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', response_text, re.DOTALL)
+        if json_match:
+            try:
+                return json.loads(json_match.group(1))
+            except:
+                pass
+        
+        # Strategy 3: Find JSON object anywhere in response
+        json_match = re.search(r'\{[^{}]*"commands"[^{}]*\}', response_text, re.DOTALL)
+        if json_match:
+            try:
+                return json.loads(json_match.group(0))
+            except:
+                pass
+        
+        # Strategy 4: Extract commands manually from text
+        commands = []
+        for line in response_text.split('\n'):
+            line = line.strip()
+            # Common shell commands prefix
+            if line.startswith(('cd ', 'npm ', 'pip ', 'python', 'git ', 
+                                'node ', 'yarn ', 'mkdir ', 'touch ', 'ls ')):
+                commands.append(line)
+        
+        if commands:
+            return {"commands": commands, "done": False, "response_text": response_text[:200]}
+        
+        # Fallback: no commands found
+        return {"commands": [], "done": False, "response_text": response_text[:200]}
             
     except Exception as e:
-        logger.error(f"Vision call failed: {e}. Falling back to blind round.")
-        # Fallback: return empty but NOT done so the loop continues
-        return {"commands": [], "done": False, "response_text": "Vision extraction failed, proceeding to next round."}
+        logger.error(f"Vision extraction error: {e}")
+        return {"commands": [], "done": False, "response_text": "vision error"}

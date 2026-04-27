@@ -77,3 +77,6 @@
 {"timestamp": "2026-04-26T22:52:33", "endpoint": "/browser/screenshot", "action": "screenshot", "result": "success", "duration_ms": 1460.05, "error": null, "width": 2336, "height": 1510}
 {"timestamp": "2026-04-26T22:53:16", "endpoint": "/app/open", "action": "Cursor", "result": "success", "duration_ms": 145.83, "error": null}
 {"timestamp": "2026-04-26T23:20:07", "endpoint": "/app/open", "action": "Cursor", "result": "success", "duration_ms": 54.72, "error": null}
+{"timestamp": "2026-04-27T00:10:36", "endpoint": "/terminal", "action": "cd '/Users/miruzaankhan/Documents/react-test2'", "result": "non_zero_exit", "duration_ms": 6.26, "error": "/bin/sh: line 0: cd: /Users/miruzaankhan/Documents/react-test2: No such file or directory\n", "exit_code": 1, "cwd": "/Users/miruzaankhan"}
+{"timestamp": "2026-04-27T00:11:13", "endpoint": "/terminal", "action": "npm install", "result": "error", "duration_ms": 0.32, "error": "[Errno 2] No such file or directory"}
+{"timestamp": "2026-04-27T00:11:17", "endpoint": "/terminal", "action": "npm run dev", "result": "error", "duration_ms": 0.15, "error": "[Errno 2] No such file or directory"}

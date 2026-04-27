@@ -487,6 +487,11 @@ async def app_active(_: Auth):
     result = browser.get_active_window()
     return result
 
+@app.post("/cursor/read_chat", tags=["mac"])
+async def cursor_read_chat(_: Auth):
+    result = browser.read_cursor_chat()
+    return result
+
 @app.post("/browser/screenshot", tags=["mac"])
 async def take_screenshot(_: Auth):
     result = browser.take_screenshot()

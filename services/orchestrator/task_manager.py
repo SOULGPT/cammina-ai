@@ -291,13 +291,19 @@ async def execute_autonomous_cursor(task_id: str, instruction: str, project_path
                 await broadcast_event(task_id, "cursor_autonomous", {"message": f"Round {rounds_executed}: Analyzing screenshot..."})
                 vision_result = await planner.extract_commands_from_screenshot(image_b64, task_id)
                 
+                logger.info(f"Vision result for task {task_id}: {vision_result}")
+                
                 commands = vision_result.get("commands", [])
                 is_done = vision_result.get("done", False)
                 response_text = vision_result.get("response_text", "")
                 
+                if not commands:
+                    logger.warning(f"No commands extracted in round {rounds_executed}. Cursor said: {response_text}")
+
                 await broadcast_event(task_id, "cursor_autonomous", {
                     "message": f"Round {rounds_executed}: Cursor response: {response_text}",
-                    "commands": commands
+                    "commands": commands,
+                    "raw_vision_result": vision_result
                 })
                 
                 if not commands and is_done:

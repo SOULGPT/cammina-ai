@@ -100,7 +100,22 @@ export default function ChatComponent() {
           } else if (payload.action === 'cursor_focus') {
             content = result.success ? `Focused application: ${payload.app}` : `Error: ${result.error}`;
           } else if (url.includes('autonomous')) {
-            content = result.success ? `Autonomous task finished. Rounds: ${result.rounds}. Commands run: ${result.commands_executed.join(', ')}` : `Error: ${result.error}`;
+            if (result.success) {
+              const newFiles = Array.isArray(result.new_files) ? result.new_files : [];
+              const commandsRun = Array.isArray(result.commands_run) ? result.commands_run.map((c: any) => c.command) : [];
+              const summaryResults = Array.isArray(result.results) ? result.results : [];
+              
+              content = [
+                `Autonomous task finished. Rounds: ${result.rounds || 1}`,
+                result.project_path ? `New project created at: ${result.project_path}` : '',
+                `New files: ${newFiles.length}`,
+                `Commands run: ${commandsRun.length > 0 ? commandsRun.join(', ') : 'none'}`,
+                `Details: ${summaryResults.join(' | ')}`,
+                result.chat_text ? `Cursor said: ${result.chat_text.slice(0, 200)}` : ''
+              ].filter(Boolean).join('\n');
+            } else {
+              content = `Error: ${result.error || 'Unknown error'}`;
+            }
           }
 
           addMessage({

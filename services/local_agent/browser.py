@@ -140,3 +140,22 @@ def take_screenshot_base64() -> str:
         data = base64.b64encode(f.read()).decode()
     os.unlink(tmp)
     return data
+
+def read_cursor_chat() -> dict:
+    """Read the current clipboard content, assuming it contains Cursor chat text"""
+    try:
+        script = """
+set clipText to the clipboard
+return clipText
+"""
+        result = subprocess.run(
+            ['osascript', '-e', script],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return {"success": True, "text": result.stdout.strip()}
+        
+        # Fallback: empty text
+        return {"success": True, "text": ""}
+    except Exception as e:
+        return {"success": False, "text": "", "error": str(e)}
