@@ -43,6 +43,7 @@ interface AppState {
   setActiveTask: (task: Partial<TaskState>) => void;
   addMessage: (message: Message) => void;
   setMessages: (messages: Message[]) => void;
+  clearMessages: () => void;
   resetTaskState: () => void;
 }
 
@@ -75,6 +76,7 @@ export const useStore = create<AppState>((set) => ({
     messages: [...state.messages, message] 
   })),
   setMessages: (messages) => set({ messages }),
+  clearMessages: () => set({ messages: [] }),
   
   resetTaskState: () => set({
     activeTask: { id: null, status: 'idle', currentStep: 0, totalSteps: 0 },
