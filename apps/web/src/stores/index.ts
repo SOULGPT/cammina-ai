@@ -33,6 +33,7 @@ interface AppState {
   // Active Task State
   activeTask: TaskState;
   messages: Message[];
+  selectedProject: string;
 
   // Actions
   setUser: (user: { id: string; email: string } | null) => void;
@@ -44,6 +45,7 @@ interface AppState {
   addMessage: (message: Message) => void;
   setMessages: (messages: Message[]) => void;
   clearMessages: () => void;
+  setSelectedProject: (project: string) => void;
   resetTaskState: () => void;
 }
 
@@ -63,6 +65,7 @@ export const useStore = create<AppState>((set) => ({
     totalSteps: 0,
   },
   messages: [],
+  selectedProject: 'general',
 
   setUser: (user) => set({ user }),
   setProjects: (projects) => set({ projects }),
@@ -77,9 +80,11 @@ export const useStore = create<AppState>((set) => ({
   })),
   setMessages: (messages) => set({ messages }),
   clearMessages: () => set({ messages: [] }),
+  setSelectedProject: (selectedProject) => set({ selectedProject }),
   
   resetTaskState: () => set({
     activeTask: { id: null, status: 'idle', currentStep: 0, totalSteps: 0 },
-    messages: []
+    messages: [],
+    selectedProject: 'general'
   })
 }));

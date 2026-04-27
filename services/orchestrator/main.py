@@ -283,24 +283,47 @@ async def cursor_autonomous(request: dict):
 
 @app.get("/projects")
 async def get_projects():
-    import os
-    # Path relative to services/orchestrator/
+    import os, json
     projects_dir = "../../logs/projects"
     projects = []
+    
     if os.path.exists(projects_dir):
         for name in os.listdir(projects_dir):
-            path = os.path.join(projects_dir, name)
-            if os.path.isdir(path):
-                projects.append({"name": name})
+            project_path = os.path.join(projects_dir, name)
+            if os.path.isdir(project_path):
+                # Count memories
+                memory_count = 0
+                actions_file = os.path.join(project_path, "memory", "actions.json")
+                if os.path.exists(actions_file):
+                    try:
+                        with open(actions_file) as f:
+                            actions = json.load(f)
+                            memory_count = len(actions)
+                    except: pass
+                
+                projects.append({
+                    "name": name,
+                    "memory_count": memory_count,
+                    "path": project_path
+                })
     
-    # Also add hardcoded defaults
-    default_names = ["cammina", "general", "todo-app", "flask-test"]
-    existing = [p["name"] for p in projects]
-    for name in default_names:
-        if name not in existing:
-            projects.append({"name": name})
-    
+    # Sort by name
+    projects.sort(key=lambda x: x["name"])
     return {"projects": projects}
+
+@app.post("/projects/create")
+async def create_project(request: dict):
+    import os
+    name = request.get("name")
+    if not name: return {"error": "Name required"}
+    
+    base_path = f"../../logs/projects/{name}"
+    os.makedirs(f"{base_path}/memory", exist_ok=True)
+    os.makedirs(f"{base_path}/logs", exist_ok=True)
+    os.makedirs(f"{base_path}/errors", exist_ok=True)
+    os.makedirs(f"{base_path}/task_logs", exist_ok=True)
+    
+    return {"success": True, "name": name}
 
 @app.post("/memory/cleanup")
 async def cleanup_memory(request: dict):

@@ -12,11 +12,11 @@ export default function ChatComponent() {
   const [showSuggestions, setShowSuggestions] = useState(false);
   
   const [projects, setProjects] = useState<any[]>([]);
-  const [selectedProject, setSelectedProject] = useState<string>('general');
 
   const messages = useStore((state) => state.messages);
   const activeTask = useStore((state) => state.activeTask);
-  const { addMessage, setActiveTask, clearMessages } = useStore();
+  const selectedProject = useStore((state) => state.selectedProject);
+  const { addMessage, setActiveTask, clearMessages, setSelectedProject } = useStore();
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
