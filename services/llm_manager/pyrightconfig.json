@@ -5,5 +5,11 @@
   "pythonPlatform": "Darwin",
   "typeCheckingMode": "basic",
   "reportMissingImports": false,
-  "reportMissingModuleSource": false
+  "reportMissingModuleSource": false,
+  "executionEnvironments": [
+    {
+      "root": ".",
+      "extraPaths": ["."]
+    }
+  ]
 }

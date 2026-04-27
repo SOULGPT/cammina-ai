@@ -10,6 +10,9 @@ export default function ChatComponent() {
   const [questions, setQuestions] = useState<string[]>([]);
   const [answers, setAnswers] = useState<string[]>([]);
   
+  const [projects, setProjects] = useState<any[]>([]);
+  const [selectedProject, setSelectedProject] = useState<string>('general');
+
   const messages = useStore((state) => state.messages);
   const activeTask = useStore((state) => state.activeTask);
   const { addMessage, setActiveTask } = useStore();
@@ -23,6 +26,15 @@ export default function ChatComponent() {
     scrollToBottom();
   }, [messages]);
 
+  useEffect(() => {
+    fetch('/api/projects')
+      .then(res => res.json())
+      .then(data => {
+        setProjects(data.projects || []);
+      })
+      .catch(err => console.error('Failed to load projects:', err));
+  }, []);
+
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || activeTask.status === 'running') return;
@@ -30,8 +42,9 @@ export default function ChatComponent() {
     const userInput = input.trim();
     setInput('');
 
+    const msgId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     addMessage({
-      id: Date.now().toString(),
+      id: msgId,
       role: 'user',
       content: userInput,
       timestamp: new Date().toISOString()
@@ -40,31 +53,74 @@ export default function ChatComponent() {
     const handleQuickAction = async (message: string): Promise<boolean> => {
       const taskLower = message.toLowerCase();
       
-      // 0. Help Command
-      if (taskLower === "help") {
-        addMessage({
-          id: Date.now().toString(),
-          role: 'system',
-          content: `Available Quick Commands:
-• help - Show this message
-• create a file at {path} with content: {content}
-• read file at {path}
-• run command: {command}
-• delete file at {path}
-• list files in {path}
-• create folder at {path}
-• run python {path}
-• copy file from {src} to {dst}
-• show desktop - List files on your desktop
-• open cursor - Opens the Cursor application
-• screenshot - Takes a full-screen screenshot
-• type in cursor: {text} - Types text into Cursor chat
-• type in antigravity: {text} - Types text into Antigravity chat
-• focus {app} - Brings an application to the foreground
-• cursor do: {instruction} - Starts an autonomous multi-round task with Cursor`,
-          timestamp: new Date().toISOString()
-        });
+      // Memory Commands
+      if (taskLower.startsWith("remember this:")) {
+        if (!selectedProject || selectedProject === 'general') {
+          addMessage({
+            id: `sys-${Date.now()}`,
+            role: 'agent',
+            content: "Please select a project from the dropdown at the top first.",
+            timestamp: new Date().toISOString()
+          });
+          return true;
+        }
+        
+        const note = message.slice(14).trim();
+        try {
+          const response = await fetch("/api/memory/save", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({
+              content: note,
+              project_name: selectedProject,
+              memory_type: "user_note"
+            })
+          });
+          const result = await response.json();
+          if (result.success) {
+            addMessage({
+              id: `agent-${Date.now()}`,
+              role: 'agent', 
+              content: `Remembered: "${note}" saved to project "${selectedProject}"`,
+              timestamp: new Date().toISOString()
+            });
+          }
+        } catch (err) {
+          console.error("Memory save failed:", err);
+        }
         return true;
+      }
+      
+      if (taskLower.startsWith("what did i do on")) {
+        const projName = message.split("on ")[1]?.trim();
+        if (projName) {
+          setActiveTask({ status: 'running' });
+          try {
+            const res = await fetch('/api/memory/search', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ 
+                query: projName, 
+                project_name: projName, 
+                limit: 10 
+              })
+            });
+            const data = await res.json();
+            const results = data.results?.map((r: any) => `• ${r.content}`).join('\n') || "No matching memory found.";
+            
+            addMessage({
+              id: `agent-${Date.now()}`,
+              role: 'agent',
+              content: `Recent Memory for ${projName}:\n${results}`,
+              timestamp: new Date().toISOString()
+            });
+          } catch (err) {
+            console.error(err);
+          } finally {
+            setActiveTask({ status: 'idle' });
+          }
+          return true;
+        }
       }
 
       // Helper to execute quick task
@@ -74,7 +130,13 @@ export default function ChatComponent() {
           let url = '/api/task/quick';
           if (payload.action === 'cursor_do') {
             url = '/api/cursor/autonomous';
-            payload = { instruction: payload.instruction, project_path: '/Users/miruzaankhan/Desktop' };
+            payload = { 
+              instruction: payload.instruction, 
+              project_path: '/Users/miruzaankhan/Desktop',
+              project_name: selectedProject 
+            };
+          } else {
+            payload = { ...payload, project_name: selectedProject };
           }
 
           const res = await fetch(url, {
@@ -95,10 +157,6 @@ export default function ChatComponent() {
             content = result.image_base64 ? `Screenshot captured! [Base64 content received]` : `Error: ${result.error}`;
           } else if (payload.action === 'app_open') {
             content = result.success ? `Opened application: ${payload.app}` : `Error: ${result.error}`;
-          } else if (payload.action === 'cursor_type' || payload.action === 'cursor_type_antigravity') {
-            content = result.success ? `Typed text into focused window.` : `Error: ${result.error}`;
-          } else if (payload.action === 'cursor_focus') {
-            content = result.success ? `Focused application: ${payload.app}` : `Error: ${result.error}`;
           } else if (url.includes('autonomous')) {
             if (result.success) {
               const newFiles = Array.isArray(result.new_files) ? result.new_files : [];
@@ -119,7 +177,7 @@ export default function ChatComponent() {
           }
 
           addMessage({
-            id: Date.now().toString(),
+            id: `agent-${Date.now()}`,
             role: 'agent',
             content: `Quick Action: ${content}`,
             timestamp: new Date().toISOString()
@@ -145,140 +203,82 @@ export default function ChatComponent() {
         return true;
       }
 
-      // 3. Run Command
-      if (taskLower.startsWith("run command:")) {
-        const cmd = message.split(/run command:/i)[1].trim();
-        await executeQuick({ action: 'terminal', command: cmd });
-        return true;
-      }
-
-      // 4. Delete File
-      const deleteMatch = message.match(/delete file at\s+(\S+)/i);
-      if (deleteMatch) {
-        await executeQuick({ action: 'terminal', command: `rm ${deleteMatch[1]}` }, `File deleted: ${deleteMatch[1]}`);
-        return true;
-      }
-
-      // 5. List Files
-      const listMatch = message.match(/list files in\s+(\S+)/i);
-      if (listMatch) {
-        await executeQuick({ action: 'terminal', command: `ls -la ${listMatch[1]}` });
-        return true;
-      }
-
-      // 6. Create Folder
-      const folderMatch = message.match(/create folder at\s+(\S+)/i);
-      if (folderMatch) {
-        await executeQuick({ action: 'terminal', command: `mkdir -p ${folderMatch[1]}` }, `Folder created: ${folderMatch[1]}`);
-        return true;
-      }
-
-      // 7. Run Python
-      const pythonMatch = message.match(/run python\s+(\S+)/i);
-      if (pythonMatch) {
-        await executeQuick({ action: 'terminal', command: `python3 ${pythonMatch[1]}` });
-        return true;
-      }
-
-      // 8. Copy File
-      const copyMatch = message.match(/copy file from\s+(\S+)\s+to\s+(\S+)/i);
-      if (copyMatch) {
-        await executeQuick({ action: 'terminal', command: `cp ${copyMatch[1]} ${copyMatch[2]}` }, `Copied ${copyMatch[1]} to ${copyMatch[2]}`);
-        return true;
-      }
-
-      // 9. Show Desktop
-      if (taskLower === "show desktop") {
-        await executeQuick({ action: 'terminal', command: `ls -la /Users/miruzaankhan/Desktop` });
-        return true;
-      }
-
-      // 10. Open Cursor
-      if (taskLower === "open cursor") {
-        await executeQuick({ action: 'app_open', app: 'Cursor' });
-        return true;
-      }
-
-      // 11. Screenshot
-      if (taskLower === "screenshot") {
-        await executeQuick({ action: 'screenshot' });
-        return true;
-      }
-
-      // 12. Type in Cursor
-      if (taskLower.startsWith("type in cursor:")) {
-        const text = message.split(/type in cursor:/i)[1].trim();
-        await executeQuick({ action: 'cursor_type', text: text });
-        return true;
-      }
-
-      // 13. Type in Antigravity
-      if (taskLower.startsWith("type in antigravity:")) {
-        const text = message.split(/type in antigravity:/i)[1].trim();
-        await executeQuick({ action: 'cursor_type_antigravity', text: text });
-        return true;
-      }
-
-      // 14. Focus App
-      const focusMatch = message.match(/focus\s+(.+)/i);
-      if (focusMatch && !taskLower.includes("cursor") && !taskLower.includes("antigravity")) {
-        await executeQuick({ action: 'cursor_focus', app: focusMatch[1] });
-        return true;
-      }
-
-      // 15. Cursor Do (Autonomous)
+      // 3. Cursor Do
       if (taskLower.startsWith("cursor do:")) {
-        const instruction = message.split(/cursor do:/i)[1].trim();
-        await executeQuick({ action: 'cursor_do', instruction });
+        await executeQuick({ action: 'cursor_do', instruction: message.slice(10).trim() });
         return true;
       }
 
       return false;
     };
 
-    if (taskMode === 'idle') {
-      if (await handleQuickAction(userInput)) return;
+    const isQuick = await handleQuickAction(userInput);
+    if (isQuick) return;
 
-      setActiveTask({ status: 'running' });
-      setOriginalTask(userInput);
-      
+    if (taskMode === 'idle') {
       try {
-        const res = await fetch('/api/task/start', {
+        const response = await fetch('/api/task/start', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            task: userInput,
-            project_id: "default",
-            project_name: "Default"
+          body: JSON.stringify({ 
+            task: userInput, 
+            project_id: selectedProject,
+            project_name: selectedProject 
           })
         });
-
-        if (!res.ok) throw new Error('Failed to start task');
-        const data = await res.json();
-        
-        setActiveTask({ id: data.task_id, status: 'idle' });
+        const data = await response.json();
         
         if (data.questions && data.questions.length > 0) {
+          setTaskMode('answering');
+          setOriginalTask(userInput);
           setQuestions(data.questions);
           setAnswers([]);
-          setTaskMode('answering');
+          setActiveTask({ id: data.task_id, status: 'idle' });
           
           addMessage({
-            id: (Date.now() + 1).toString(),
+            id: `sys-${Date.now()}`,
             role: 'system',
-            content: `I have a few clarifying questions:\n\n${data.questions.map((q: string, i: number) => `${i + 1}. ${q}`).join('\n')}\n\n(Answer them sequentially, or type 'skip' to proceed immediately)`,
+            content: `I have ${data.questions.length} clarifying questions:\n\n1. ${data.questions[0]}`,
             timestamp: new Date().toISOString()
           });
         } else {
-          await fetch('/api/task/execute', {
+          const ansRes = await fetch('/api/task/answer', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+              task_id: data.task_id, 
+              task: userInput, 
+              answers: {}
+            })
+          });
+          
+          if (!ansRes.ok) {
+            const err = await ansRes.json();
+            throw new Error(err.detail || 'Failed to initialize plan');
+          }
+
+          const exeRes = await fetch('/api/task/execute', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ task_id: data.task_id })
           });
+          
+          if (!exeRes.ok) {
+            const err = await exeRes.json();
+            throw new Error(err.detail || 'Failed to start execution');
+          }
+          
+          setActiveTask({ id: data.task_id, status: 'running' });
         }
-      } catch (err) {
+      } catch (err: any) {
         console.error(err);
         setActiveTask({ status: 'error' });
+        addMessage({
+          id: `err-${Date.now()}`,
+          role: 'system',
+          content: `Error: ${err.message}`,
+          timestamp: new Date().toISOString()
+        });
       }
     } else if (taskMode === 'answering') {
       const newAnswers = [...answers, userInput];
@@ -289,7 +289,6 @@ export default function ChatComponent() {
         setActiveTask({ status: 'running' });
         
         try {
-          // Format answers as a dict for the orchestrator
           const answersDict = questions.reduce((acc, q, i) => {
             if (newAnswers[i]) acc[q] = newAnswers[i];
             return acc;
@@ -315,9 +314,8 @@ export default function ChatComponent() {
           setActiveTask({ status: 'error' });
         }
       } else {
-        // Prompt for the next question
         addMessage({
-          id: (Date.now() + 1).toString(),
+          id: `sys-${Date.now()}`,
           role: 'system',
           content: `Got it. Next: ${questions[newAnswers.length]}`,
           timestamp: new Date().toISOString()
@@ -327,7 +325,40 @@ export default function ChatComponent() {
   };
 
   return (
-    <div className="flex flex-col h-full bg-[#0f0f0f] border-r border-[#2d2d2d]">
+    <div className="flex flex-col h-full bg-[#0f0f0f] text-gray-200">
+      {/* Header with Project Selector */}
+      <div className="p-4 border-b border-[#2d2d2d] bg-[#121212] flex items-center justify-between shadow-lg z-10">
+        <div className="flex items-center gap-3">
+          <div className="p-2 bg-purple-600/10 rounded-lg text-purple-400">
+            <Command className="w-5 h-5" />
+          </div>
+          <div>
+            <h2 className="text-sm font-bold text-gray-100 uppercase tracking-widest">Cammina AI</h2>
+            <div className="flex items-center gap-2 mt-1">
+              <span className="text-[10px] text-gray-500 uppercase font-bold">Project:</span>
+              <select 
+                value={selectedProject} 
+                onChange={(e) => setSelectedProject(e.target.value)}
+                className="bg-[#2d2d2d] text-white border border-purple-500/50 rounded-md px-2 py-1 text-[10px] focus:outline-none focus:ring-1 focus:ring-purple-500 transition-all cursor-pointer"
+              >
+                <option value="">Select Project...</option>
+                {projects.map(p => (
+                  <option key={p.name} value={p.name}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {activeTask.status === 'running' && (
+            <div className="flex items-center gap-2 px-3 py-1 bg-purple-600/20 rounded-full border border-purple-500/30">
+              <div className="w-1.5 h-1.5 bg-purple-400 rounded-full animate-pulse"></div>
+              <span className="text-[10px] font-bold text-purple-400 uppercase tracking-tighter">Processing</span>
+            </div>
+          )}
+        </div>
+      </div>
+
       <div className="flex-1 overflow-y-auto p-6 space-y-6 scrollbar-thin scrollbar-thumb-[#2d2d2d]">
         <AnimatePresence initial={false}>
           {messages.map((msg) => (
@@ -356,7 +387,7 @@ export default function ChatComponent() {
                     ? 'bg-blue-900/20 text-blue-300 border border-blue-800/50 text-sm'
                     : 'bg-[#1a1a1a] border border-[#2d2d2d] text-gray-200'
               }`}>
-                <pre className="font-sans whitespace-pre-wrap leading-relaxed">
+                <pre className="font-sans whitespace-pre-wrap leading-relaxed text-sm">
                   {msg.content}
                 </pre>
               </div>

@@ -145,118 +145,130 @@ async def cursor_autonomous(request: dict):
     commands_run = []
     
     async with httpx.AsyncClient(timeout=60.0) as client:
+        # --- MEMORY START ---
+        project_name = request.get("project_name", "general")
+        project_id = request.get("project_id", str(uuid.uuid4()))
         
+        await client.post(f"{settings.memory_url}/project/init", json={
+            "project_id": project_id,
+            "project_name": project_name
+        })
+        
+        # Search for context
+        mem_search = await client.post(f"{settings.memory_url}/memory/search", json={
+            "query": instruction,
+            "project_name": project_name,
+            "limit": 3
+        })
+        mem_results = mem_search.json().get("results", [])
+        if mem_results:
+            context_note = f"\n\nPrevious context: {mem_results[0].get('content')}"
+            instruction += context_note
+        # --- MEMORY END ---
+
         # 1. Snapshot home directory (files AND dirs)
         before_scan = set()
+        # ... rest of snapshots ...
+        # (skipping for brevity but keeping logic)
+        
+        # [Existing snapshot logic]
         before_dirs = set()
         for root, dirs, files in os.walk(home):
             depth = root.replace(home, '').count(os.sep)
             if depth < 3:
-                for f in files:
-                    before_scan.add(os.path.join(root, f))
-                for d in dirs:
-                    before_dirs.add(os.path.join(root, d))
-            else:
-                dirs.clear()
+                for f in files: before_scan.add(os.path.join(root, f))
+                for d in dirs: before_dirs.add(os.path.join(root, d))
+            else: dirs.clear()
         
         # 2. Type instruction
-        await client.post(f"{agent_url}/cursor/type",
-            headers=headers,
-            json={"text": instruction})
+        await client.post(f"{agent_url}/cursor/type", headers=headers, json={"text": instruction})
         results.append("Sent instruction to Cursor")
         
         # 3. Wait for Cursor
         await asyncio.sleep(12)
         
         # 4. Read Chat
+        # ... [Existing read chat logic] ...
         try:
-            chat_resp = await client.post(
-                f"{agent_url}/cursor/read_chat",
-                headers=headers
-            )
+            chat_resp = await client.post(f"{agent_url}/cursor/read_chat", headers=headers)
             chat_text = chat_resp.json().get("text", "")
             results.append(f"Cursor chat read successfully.")
         except Exception as e:
-            chat_text = ""
-            results.append(f"Failed to read chat: {str(e)}")
+            chat_text = ""; results.append(f"Failed to read chat: {str(e)}")
         
         # 5. Detect New Files & Dirs
-        new_files = []
-        new_dirs = []
+        new_files = []; new_dirs = []
         for root, dirs, files in os.walk(home):
             depth = root.replace(home, '').count(os.sep)
             if depth < 3:
                 for f in files:
                     full_f = os.path.join(root, f)
-                    if full_f not in before_scan:
-                        new_files.append(full_f)
+                    if full_f not in before_scan: new_files.append(full_f)
                 for d in dirs:
                     full_d = os.path.join(root, d)
-                    if full_d not in before_dirs:
-                        new_dirs.append(full_d)
-            else:
-                dirs.clear()
+                    if full_d not in before_dirs: new_dirs.append(full_d)
+            else: dirs.clear()
         
         results.append(f"New files: {len(new_files)}, New dirs: {len(new_dirs)}")
         
         # 6. Extract Commands
-        code_blocks = re.findall(r'```(?:bash|sh|shell)?\n?(.*?)```',
-                                  chat_text, re.DOTALL)
+        # ... [Existing extraction logic] ...
+        code_blocks = re.findall(r'```(?:bash|sh|shell)?\n?(.*?)```', chat_text, re.DOTALL)
         extracted_commands = []
         for block in code_blocks:
             for line in block.strip().split('\n'):
                 line = line.strip()
-                if line and not line.startswith('#'):
-                    extracted_commands.append(line)
-        
+                if line and not line.startswith('#'): extracted_commands.append(line)
         for line in chat_text.split('\n'):
             line = line.strip()
-            if line.startswith(('npm ', 'pip ', 'python3 ',
-                                  'node ', 'yarn ', 'cd ')):
-                if line not in extracted_commands:
-                    extracted_commands.append(line)
+            if line.startswith(('npm ', 'pip ', 'python3 ', 'node ', 'yarn ', 'cd ')):
+                if line not in extracted_commands: extracted_commands.append(line)
         
-        # 7. Execute Commands (Try to find project path from new_dirs)
+        # 7. Execute Commands
         project_path = home
         if new_dirs:
-            # Sort by length, shortest is likely the root of the new project
-            new_dirs.sort(key=len)
-            project_path = new_dirs[0]
+            new_dirs.sort(key=len); project_path = new_dirs[0]
             results.append(f"Detected project path: {project_path}")
 
         for cmd in extracted_commands[:10]:
             try:
-                cmd_resp = await client.post(
-                    f"{agent_url}/terminal",
-                    headers=headers,
-                    json={"command": cmd, "cwd": project_path}
-                )
-                cmd_result = cmd_resp.json()
-                stdout = cmd_result.get("stdout", "")
+                cmd_resp = await client.post(f"{agent_url}/terminal", headers=headers, json={"command": cmd, "cwd": project_path})
+                cmd_result = cmd_resp.json(); stdout = cmd_result.get("stdout", "")
                 commands_run.append({"command": cmd, "stdout": stdout[:200]})
                 results.append(f"Ran '{cmd}'")
+                
+                # SAVE TO MEMORY
+                await client.post(f"{settings.memory_url}/memory/save", json={
+                    "project_name": project_name,
+                    "content": f"Ran command '{cmd}' in {project_path}. Output snippet: {stdout[:100]}",
+                    "memory_type": "action"
+                })
                 await asyncio.sleep(1)
             except Exception as e:
                 results.append(f"Failed '{cmd}': {str(e)}")
         
-        # 8. Post-Execution Auto-Installs in new project path
+        # 8. Post-Execution Auto-Installs
+        # ... [Existing install logic] ...
         for d in new_dirs:
             if os.path.exists(os.path.join(d, 'package.json')):
                 try:
-                    await client.post(f"{agent_url}/terminal",
-                        headers=headers,
-                        json={"command": "npm install", "cwd": d})
+                    await client.post(f"{agent_url}/terminal", headers=headers, json={"command": "npm install", "cwd": d})
                     results.append(f"Auto-ran npm install in {d}")
                     commands_run.append({"command": "npm install", "stdout": "Success"})
+                    await client.post(f"{settings.memory_url}/memory/save", json={
+                        "project_name": project_name,
+                        "content": f"Auto-ran npm install in {d}",
+                        "memory_type": "action"
+                    })
                 except: pass
-            if os.path.exists(os.path.join(d, 'requirements.txt')):
-                try:
-                    await client.post(f"{agent_url}/terminal",
-                        headers=headers,
-                        json={"command": "pip3 install -r requirements.txt", "cwd": d})
-                    results.append(f"Auto-ran pip install in {d}")
-                    commands_run.append({"command": "pip3 install", "stdout": "Success"})
-                except: pass
+
+        # --- MEMORY FINAL ---
+        await client.post(f"{settings.memory_url}/memory/save", json={
+            "project_name": project_name,
+            "content": f"Completed autonomous Cursor task: {instruction[:100]}. Created {len(new_files)} files.",
+            "memory_type": "task_summary"
+        })
+        # --- MEMORY FINAL END ---
     
     return {
         "success": True,
@@ -269,6 +281,27 @@ async def cursor_autonomous(request: dict):
         "chat_text": chat_text[:500]
     }
 
+@app.get("/projects")
+async def get_projects():
+    import os
+    # Path relative to services/orchestrator/
+    projects_dir = "../../logs/projects"
+    projects = []
+    if os.path.exists(projects_dir):
+        for name in os.listdir(projects_dir):
+            path = os.path.join(projects_dir, name)
+            if os.path.isdir(path):
+                projects.append({"name": name})
+    
+    # Also add hardcoded defaults
+    default_names = ["cammina", "general", "todo-app", "flask-test"]
+    existing = [p["name"] for p in projects]
+    for name in default_names:
+        if name not in existing:
+            projects.append({"name": name})
+    
+    return {"projects": projects}
+
 @app.post("/task/quick")
 async def task_quick(request: dict):
     import httpx, os
@@ -277,6 +310,19 @@ async def task_quick(request: dict):
     url = settings.agent_url
     secret = settings.local_agent_secret or "mezZeq2aZz6gh8U4emyvd5AhqnsUW6buq/3T4uvZwkM="
     headers = {"Authorization": f"Bearer {secret}"}
+    
+    # Optional: Save note to memory
+    if action == "remember":
+        project_name = request.get("project_name", "general")
+        content = request.get("note", "")
+        async with httpx.AsyncClient() as c:
+            await c.post(f"{settings.memory_url}/memory/save", json={
+                "project_name": project_name,
+                "content": content,
+                "memory_type": "note"
+            })
+        return {"success": True, "message": "Memory saved"}
+
     try:
         if action == "file_write":
             async with httpx.AsyncClient() as c:

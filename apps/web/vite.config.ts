@@ -13,6 +13,11 @@ export default defineConfig({
     port: 3000,
     strictPort: true,
     proxy: {
+      '/api/memory': {
+        target: 'http://localhost:8002',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/memory/, '/memory')
+      },
       '/api': {
         target: 'http://localhost:8000',
         changeOrigin: true,

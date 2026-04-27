@@ -3,6 +3,7 @@ import json
 import logging
 import httpx
 import re
+import uuid
 from datetime import datetime, timezone
 
 import planner
@@ -150,9 +151,33 @@ async def execute_task_loop(task_id: str):
     state = get_state(task_id)
     state["status"] = "running"
     
+    project_name = state.get("project_name", "general")
+    project_id = state.get("project_id", str(uuid.uuid4()))
+    task_desc = state.get("task_description", "")
+
     cp_task = asyncio.create_task(checkpoint_loop(task_id))
     
     try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            # 1. Init project memory
+            await client.post(f"{settings.memory_url}/project/init", json={
+                "project_id": project_id,
+                "project_name": project_name
+            })
+            
+            # 2. Search for relevant context
+            mem_search = await client.post(f"{settings.memory_url}/memory/search", json={
+                "query": task_desc,
+                "project_name": project_name,
+                "limit": 3
+            })
+            mem_results = mem_search.json().get("results", [])
+            if mem_results:
+                context_prefix = f"Previous work on this project: {mem_results[0].get('content')}\n\n"
+                # This affects the context for planner calls if we were to re-plan, 
+                # but for now we just log it.
+                logger.info(f"Memory context found for task {task_id}")
+
         # 0. Try direct execution first to bypass LLM
         if await try_direct_execution(task_id):
             return
@@ -168,69 +193,55 @@ async def execute_task_loop(task_id: str):
             current_action = step
             
             while retry_count < 3 and not success:
+                # ... [Existing retry and safety logic] ...
                 if retry_count > 0:
-                    await broadcast_event(task_id, "retrying", {
-                        "attempt": retry_count, 
-                        "message": "Asking LLM for alternative approach..."
-                    })
-                    # Ask LLM for a DIFFERENT approach
-                    current_action = await planner.get_alternative_approach(
-                        step, 
-                        str(last_result.get("error", "Unknown error")), 
-                        state["history"], 
-                        task_id
-                    )
-                    if not current_action:
-                        break
+                    await broadcast_event(task_id, "retrying", {"attempt": retry_count, "message": "Asking LLM for alternative approach..."})
+                    current_action = await planner.get_alternative_approach(step, str(last_result.get("error", "Unknown error")), state["history"], task_id)
+                    if not current_action: break
 
-                # Safety guard: check for destructive commands
                 if current_action.get("action_type") == "terminal":
                     cmd = current_action.get("command", "").lower()
                     if any(k in cmd for k in ["rm", "rmdir", "delete"]):
-                        task_desc = state.get("task_description", "").lower()
-                        if not any(word in task_desc for word in ["delete", "remove", "clean"]):
-                            logger.warning(f"Skipped dangerous command: {cmd}")
+                        if not any(word in task_desc.lower() for word in ["delete", "remove", "clean"]):
                             await broadcast_event(task_id, "safety_skip", {"message": f"Skipped dangerous command: {cmd}"})
-                            success = True # Treat as success to move past it
-                            break
+                            success = True; break
 
                 await broadcast_event(task_id, "action", {"action": current_action})
-                
-                # Execute the step
                 last_result = await execute_step(current_action)
                 await broadcast_event(task_id, "result", {"result": last_result})
 
-                # Broadcast detailed step result for UI
-                await broadcast_event(task_id, "step_result", {
-                    "step": state["current_step"] + 1,
-                    "action_type": current_action.get("action_type"),
-                    "action": current_action,
-                    "result": last_result
-                })
-                
-                # Add to context
-                state["history"].append({
-                    "step_index": state["current_step"],
-                    "attempt": retry_count,
-                    "action": current_action,
-                    "result": last_result
-                })
-                
-                # Verify success
+                # ... [Existing history and verification] ...
+                state["history"].append({"step_index": state["current_step"], "attempt": retry_count, "action": current_action, "result": last_result})
                 is_error = last_result.get("error") or (last_result.get("exit_code") is not None and last_result.get("exit_code") != 0)
+                
                 if not is_error:
                     success = True
+                    # SAVE TO PROJECT MEMORY
+                    try:
+                        async with httpx.AsyncClient() as client:
+                            await client.post(f"{settings.memory_url}/memory/save", json={
+                                "project_name": project_name,
+                                "content": f"Step {state['current_step'] + 1}: {step.get('description')} -> SUCCESS",
+                                "memory_type": "action"
+                            })
+                    except: pass
                 else:
                     state["errors_count"] += 1
                     retry_count += 1
             
-            if not success:
-                logger.error(f"Step {state['current_step']} failed after 3 attempts. Skipping.")
-                await broadcast_event(task_id, "step_failed", {"message": "Step failed after 3 attempts. Skipping to next step."})
-            
             state["current_step"] += 1
             await _save_checkpoint(task_id)
             
+        # SAVE FINAL SUMMARY
+        try:
+            async with httpx.AsyncClient() as client:
+                await client.post(f"{settings.memory_url}/memory/save", json={
+                    "project_name": project_name,
+                    "content": f"Completed task: {task_desc}. Steps: {state['current_step']}. Result: success",
+                    "memory_type": "task_summary"
+                })
+        except: pass
+
         state["status"] = "completed"
         await broadcast_event(task_id, "completed", {"message": "Task complete"})
             

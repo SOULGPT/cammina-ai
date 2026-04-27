@@ -142,20 +142,46 @@ def take_screenshot_base64() -> str:
     return data
 
 def read_cursor_chat() -> dict:
-    """Read the current clipboard content, assuming it contains Cursor chat text"""
+    """Read the current Cursor chat content by scraping the UI or clipboard"""
     try:
+        import time
+        
+        # 1. Focus Cursor first
+        focus_script = """
+        tell application "Cursor"
+            activate
+        end tell
+        """
+        subprocess.run(['osascript', '-e', focus_script], timeout=5)
+        time.sleep(2)
+        
+        # 2. Use AppleScript to get text from Cursor's window
+        # Try to find the last AI response in chat
         script = """
-set clipText to the clipboard
-return clipText
-"""
+        tell application "System Events"
+            tell process "Cursor"
+                set allText to ""
+                try
+                    set allText to value of text area 1 of scroll area 1 of group 1 of group 1 of window 1
+                end try
+                return allText
+            end tell
+        end tell
+        """
         result = subprocess.run(
             ['osascript', '-e', script],
-            capture_output=True, text=True, timeout=5
+            capture_output=True, text=True, timeout=10
         )
         if result.returncode == 0 and result.stdout.strip():
             return {"success": True, "text": result.stdout.strip()}
         
-        # Fallback: empty text
-        return {"success": True, "text": ""}
+        # Fallback: read clipboard
+        clip_script = "return the clipboard"
+        clip_result = subprocess.run(
+            ['osascript', '-e', clip_script],
+            capture_output=True, text=True, timeout=5
+        )
+        return {"success": True, "text": clip_result.stdout.strip()}
+        
     except Exception as e:
         return {"success": False, "text": "", "error": str(e)}
