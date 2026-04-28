@@ -48,6 +48,15 @@ class TaskActionRequest(BaseModel):
 async def health():
     return {"status": "healthy", "service": "cammina-orchestrator"}
 
+@app.get("/user/home")
+async def get_user_home():
+    import os
+    return {
+        "home": os.path.expanduser("~"),
+        "desktop": os.path.join(os.path.expanduser("~"), "Desktop"),
+        "username": os.path.basename(os.path.expanduser("~"))
+    }
+
 
 @app.post("/task/start", tags=["task"])
 async def task_start(req: TaskStartRequest):
@@ -135,10 +144,13 @@ async def cursor_autonomous(request: dict):
     
     instruction = request.get("instruction", "")
     max_rounds = request.get("max_rounds", 5)
-    home = "/Users/miruzaankhan"
+    home = settings.user_home
     
     agent_url = settings.agent_url
-    agent_secret = settings.local_agent_secret or "mezZeq2aZz6gh8U4emyvd5AhqnsUW6buq/3T4uvZwkM="
+    agent_secret = settings.local_agent_secret
+    if not agent_secret:
+        raise HTTPException(status_code=500, detail="LOCAL_AGENT_SECRET not configured. Check .env.local")
+    
     headers = {"Authorization": f"Bearer {agent_secret}"}
     
     results = []
@@ -489,7 +501,9 @@ async def task_quick(request: dict):
     from config import settings
     action = request.get("action")
     url = settings.agent_url
-    secret = settings.local_agent_secret or "mezZeq2aZz6gh8U4emyvd5AhqnsUW6buq/3T4uvZwkM="
+    secret = settings.local_agent_secret
+    if not secret:
+        raise HTTPException(status_code=500, detail="LOCAL_AGENT_SECRET not configured. Check .env.local")
     headers = {"Authorization": f"Bearer {secret}"}
     
     # Optional: Save note to memory
@@ -512,7 +526,7 @@ async def task_quick(request: dict):
             return {"success": True, "message": f"File created at {request.get('path')}"}
         elif action == "terminal":
             async with httpx.AsyncClient() as c:
-                r = await c.post(f"{url}/terminal", headers=headers, json={"command": request.get("command"), "cwd": request.get("cwd", "/Users/miruzaankhan")})
+                r = await c.post(f"{url}/terminal", headers=headers, json={"command": request.get("command"), "cwd": request.get("cwd", settings.user_home)})
             return r.json()
         elif action == "file_read":
             async with httpx.AsyncClient() as c:

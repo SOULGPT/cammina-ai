@@ -499,4 +499,7 @@ async def take_screenshot(_: Auth):
 
 if __name__ == "__main__":
     import uvicorn
+    import os
+    if not settings.local_agent_secret:
+        raise RuntimeError("LOCAL_AGENT_SECRET environment variable is required")
     uvicorn.run("main:app", host=settings.local_agent_host, port=settings.local_agent_port, reload=True)

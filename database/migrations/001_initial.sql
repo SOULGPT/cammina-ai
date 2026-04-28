@@ -1,3 +1,0 @@
--- Migration: 001_initial_schema
--- Applied: see schema.sql for the full initial schema.
--- Add incremental changes here as new numbered migration files.

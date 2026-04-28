@@ -139,7 +139,8 @@ async def execute_step(step: dict) -> dict:
         return await agent.run_terminal(f"ls -la {step.get('file_path')}")
         
     elif action_type == "terminal":
-        return await agent.run_terminal(step.get("command"), step.get("cwd", "/Users/miruzaankhan"))
+        from config import settings
+        return await agent.run_terminal(step.get("command"), step.get("cwd", settings.user_home))
         
     elif action_type == "done":
         return {"success": True, "message": "Task complete"}

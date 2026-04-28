@@ -15,6 +15,7 @@ export default function ProjectDetails() {
   const [searchQuery, setSearchQuery] = useState('');
   const [showAddNote, setShowAddNote] = useState(false);
   const [newNote, setNewNote] = useState('');
+  const [userPaths, setUserPaths] = useState({ home: '', desktop: '' });
 
   const setSelectedProject = useStore((state) => state.setSelectedProject);
 
@@ -32,6 +33,10 @@ export default function ProjectDetails() {
 
   useEffect(() => {
     fetchDetails();
+    fetch('/api/user/home')
+      .then(res => res.json())
+      .then(data => setUserPaths({ home: data.home, desktop: data.desktop }))
+      .catch(err => console.error('Failed to load user paths:', err));
   }, [projectName]);
 
   const handleAddNote = async (e: React.FormEvent) => {
@@ -128,7 +133,7 @@ export default function ProjectDetails() {
               <Zap className="w-4 h-4" /> Switch to Chat
             </button>
             <button 
-              onClick={() => openInCursor(`/Users/miruzaankhan/Desktop/${project.name}`)}
+              onClick={() => openInCursor(`${userPaths.desktop}/${project.name}`)}
               className="px-4 py-2 bg-[#1a1a1a] border border-[#2d2d2d] text-gray-200 rounded-xl text-sm font-bold hover:bg-[#252525] transition-all flex items-center gap-2"
             >
               <ExternalLink className="w-4 h-4" /> Open in Cursor

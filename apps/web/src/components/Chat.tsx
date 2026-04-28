@@ -12,6 +12,7 @@ export default function ChatComponent() {
   const [showSuggestions, setShowSuggestions] = useState(false);
   
   const [projects, setProjects] = useState<any[]>([]);
+  const [userPaths, setUserPaths] = useState({ home: '', desktop: '' });
 
   const messages = useStore((state) => state.messages);
   const activeTask = useStore((state) => state.activeTask);
@@ -38,6 +39,10 @@ export default function ChatComponent() {
 
   useEffect(() => {
     loadProjects();
+    fetch('/api/user/home')
+      .then(res => res.json())
+      .then(data => setUserPaths({ home: data.home, desktop: data.desktop }))
+      .catch(err => console.error('Failed to load user paths:', err));
   }, []);
 
   const suggestions = [
@@ -56,8 +61,8 @@ export default function ChatComponent() {
     const msg = message.toLowerCase().trim();
     
     const projectPath = selectedProject && selectedProject !== 'general' 
-      ? `/Users/miruzaankhan/Desktop/${selectedProject}` 
-      : `/Users/miruzaankhan/Desktop/cammina`;
+      ? `${userPaths.desktop}/${selectedProject}` 
+      : `${userPaths.desktop}/cammina`;
 
     // 1. MEMORY CLEANUP - URGENT PRIORITY
     if (msg === "clean memory" || msg === "clear memory" || msg === "clean all memory") {
@@ -160,11 +165,15 @@ export default function ChatComponent() {
     if (msg === "install dependencies") { await executeQuickTerminal('if [ -f package.json ]; then npm install; elif [ -f requirements.txt ]; then pip3 install -r requirements.txt; else echo "No file found"; fi'); return true; }
     if (msg === "run app") { await executeQuickTerminal('if grep -q "\\"start\\":" package.json 2>/dev/null; then npm start; elif [ -f app.py ]; then python3 app.py; else echo "No start file"; fi'); return true; }
     if (msg === "open project in cursor") { await executeQuickTerminal(`open -a Cursor "${projectPath}"`); return true; }
-    if (msg === "open desktop") { await executeQuickTerminal('open /Users/miruzaankhan/Desktop'); return true; }
     if (msg === "what files changed") { await executeQuickTerminal('git diff --name-only'); return true; }
     if (msg === "show errors") { await executeQuickTerminal('cat logs/errors/*.json 2>/dev/null'); return true; }
-    if (msg === "restart services") { await executeQuickTerminal('./cammina restart', '/Users/miruzaankhan/Desktop/cammina'); return true; }
-    if (msg === "stop services") { await executeQuickTerminal('./cammina stop', '/Users/miruzaankhan/Desktop/cammina'); return true; }
+
+    if (msg === "services status") { await executeQuickTerminal('./cammina status', `${userPaths.desktop}/cammina`); return true; }
+
+    if (msg === "open desktop") { await executeQuickTerminal(`open ${userPaths.desktop}`); return true; }
+
+    if (msg === "restart services") { await executeQuickTerminal('./cammina restart', `${userPaths.desktop}/cammina`); return true; }
+    if (msg === "stop services") { await executeQuickTerminal('./cammina stop', `${userPaths.desktop}/cammina`); return true; }
 
     if (msg === "show memory") {
       setActiveTask({ status: 'running' });

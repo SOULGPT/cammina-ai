@@ -44,3 +44,5 @@ When working on a specific service, ensure you activate its respective virtual e
 - **General**: Keep functions atomic and modular.
 
 Thank you for contributing!
+
+Eiden AK

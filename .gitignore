@@ -63,6 +63,9 @@ Thumbs.db
 # ── Docker ────────────────────────────────────────────────────────────────────
 docker-data/
 
-# ── Logs ─────────────────────────────────────────────────────────────────────
-logs/*.log
-logs/*.jsonl
+# ── Logs & Data ──────────────────────────────────────────────────────────────
+logs/
+database/*.db
+database/chroma_data/
+!logs/README.md
+!database/README.md

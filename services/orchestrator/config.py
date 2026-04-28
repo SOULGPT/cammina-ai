@@ -22,5 +22,8 @@ class Settings(BaseSettings):
     orchestrator_port: int = 8000
     
     log_level: str = "INFO"
+    
+    user_home: str = os.path.expanduser("~")
+    desktop_path: str = os.path.join(os.path.expanduser("~"), "Desktop")
 
 settings = Settings()

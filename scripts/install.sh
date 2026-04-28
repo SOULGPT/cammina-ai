@@ -110,18 +110,26 @@ echo "🔐 Setting up environment..."
 if [ ! -f .env.local ]; then
   if [ -f .env.example ]; then
     cp .env.example .env.local
-    # Generate random secret for Mac agent
-    SECRET=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
-    # Compatibility with both BSD and GNU sed
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        sed -i '' "s/LOCAL_AGENT_SECRET=.*/LOCAL_AGENT_SECRET=$SECRET/" .env.local
-    else
-        sed -i "s/LOCAL_AGENT_SECRET=.*/LOCAL_AGENT_SECRET=$SECRET/" .env.local
-    fi
-    echo "✅ Created .env.local with a fresh security secret."
+    echo "✅ Created .env.local from example."
   else
-    echo "⚠️ .env.example not found. Please create .env.local manually."
+    echo "⚠️ .env.example not found. Creating blank .env.local"
+    touch .env.local
   fi
+fi
+
+# Ensure LOCAL_AGENT_SECRET is set
+if ! grep -q "LOCAL_AGENT_SECRET=.." .env.local; then
+  SECRET=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
+  if grep -q "LOCAL_AGENT_SECRET=" .env.local; then
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+      sed -i '' "s/LOCAL_AGENT_SECRET=.*/LOCAL_AGENT_SECRET=$SECRET/" .env.local
+    else
+      sed -i "s/LOCAL_AGENT_SECRET=.*/LOCAL_AGENT_SECRET=$SECRET/" .env.local
+    fi
+  else
+    echo "LOCAL_AGENT_SECRET=$SECRET" >> .env.local
+  fi
+  echo "✅ Generated secure LOCAL_AGENT_SECRET in .env.local"
 fi
 
 echo "🚀 Making scripts executable..."

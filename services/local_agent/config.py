@@ -18,7 +18,7 @@ class Settings(BaseSettings):
 
     local_agent_host: str = "0.0.0.0"
     local_agent_port: int = 8765
-    local_agent_secret: str = "change-me-in-env"
+    local_agent_secret: str = ""
     log_level: str = "INFO"
 
     # Absolute path to the shared logs directory

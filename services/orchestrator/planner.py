@@ -52,7 +52,7 @@ Return the questions as a JSON array of strings ONLY. Example: ["Q1", "Q2"]"""
         logger.error(f"Failed to parse questions JSON: {response}")
     return []
 
-PLANNER_SYSTEM_PROMPT = """
+_PLANNER_SYSTEM_PROMPT_TEMPLATE = """
 You are a task planner for Cammina AI running on macOS.
 You break tasks into atomic steps.
 
@@ -78,8 +78,11 @@ STRICT RULES:
 1. NEVER use action_type other than the 5 listed above
 2. For file_write: always include file_path and content
 3. For terminal: always include command and cwd
-4. Always use absolute paths starting with /Users/miruzaankhan
+4. Always use absolute paths starting with {settings.user_home}
+5. Default desktop path is {settings.desktop_path}
 """
+
+PLANNER_SYSTEM_PROMPT = _PLANNER_SYSTEM_PROMPT_TEMPLATE.format(settings=settings)
 
 async def create_plan(task_description: str, answers: dict, task_id: str) -> list[dict]:
     """Ask LLM to create a step-by-step execution plan."""
@@ -104,7 +107,7 @@ User Answers:
             return plan
     except Exception as e:
         logger.error(f"Failed to parse plan JSON: {response}")
-    return [{"step": 1, "description": "Manual task analysis", "action_type": "terminal", "command": "ls -la", "cwd": "/Users/miruzaankhan"}]
+    return [{"step": 1, "description": "Manual task analysis", "action_type": "terminal", "command": "ls -la", "cwd": settings.user_home}]
 
 async def get_alternative_approach(step: dict, error: str, history: list, task_id: str) -> dict:
     """Ask LLM for a completely different approach to the failed step."""
